@@ -7,6 +7,8 @@
 #include "../network/ntp_manager.h"
 #include "../network/http_client.h"
 #include "../app/app_manager.h"
+#include "../hal/rtc_manager.h"
+#include "../hal/time_sync_manager.h"
 #include <string.h>
 
 // Inclure les commandes SST
@@ -208,6 +210,16 @@ SysError_t interface_init(void) {
     add_command("http_debug", "Debug HTTP client", cmd_http_debug);
     
     add_command("network_test", "Test network connectivity and DNS resolution", cmd_network_test);
+    
+    // Commandes RTC et Time Sync simples
+    add_command("rtc_status", "Show RTC status and time", cmd_rtc_status);
+    add_command("rtc_recovery", "Attempt RTC recovery", cmd_rtc_recovery);
+    add_command("rtc_temp", "Show RTC temperature", cmd_rtc_temp);
+    add_command("rtc_battery", "Show RTC battery status", cmd_rtc_battery);
+    add_command("time_status", "Show current time and source", cmd_time_status);
+    add_command("time_source", "Show current time source", cmd_time_source);
+    add_command("time_sync", "Force time synchronization", cmd_time_sync);
+    add_command("time_sources", "Show detailed time sources info", cmd_time_sources);
     
     Serial.printf("Interface initialized with %d/%d commands\n", command_count, MAX_COMMANDS);
     
@@ -1686,5 +1698,276 @@ SysError_t cmd_app_resume_all(int argc, char* argv[]) {
     
     Serial.println("============================");
     return result;
-} 
+}
+
+// Commandes RTC et Time Sync simples
+SysError_t cmd_rtc_status(int argc, char* argv[]) {
+    Serial.println("=== RTC Status ===");
+    
+    if (!rtc_is_initialized()) {
+        Serial.println("RTC: NOT INITIALIZED");
+        Serial.println("===================");
+        return SYS_ERROR;
+    }
+    
+    RtcStatus_t status = rtc_get_status();
+    Serial.printf("RTC Status: ");
+    switch (status) {
+        case RTC_STATUS_OK:
+            Serial.println("OK");
+            break;
+        case RTC_STATUS_ERROR:
+            Serial.println("ERROR");
+            break;
+        case RTC_STATUS_NOT_FOUND:
+            Serial.println("NOT FOUND");
+            break;
+        default:
+            Serial.println("UNKNOWN");
+            break;
+    }
+    
+    if (status == RTC_STATUS_OK) {
+        time_t rtc_time = rtc_get_time();
+        if (rtc_time > 0) {
+            struct tm* timeinfo = localtime(&rtc_time);
+            Serial.printf("RTC Time: %04d-%02d-%02d %02d:%02d:%02d\n",
+                         timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                         timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        }
+        
+        float temp = rtc_get_temperature();
+        if (temp > -999.0f) {
+            Serial.printf("Temperature: %.1f°C\n", temp);
+        }
+        
+        bool battery_ok = rtc_is_battery_ok();
+        Serial.printf("Battery: %s\n", battery_ok ? "OK" : "LOW");
+    }
+    
+    Serial.println("===================");
+    return SYS_OK;
+}
+
+SysError_t cmd_rtc_recovery(int argc, char* argv[]) {
+    Serial.println("=== RTC Recovery ===");
+    
+    if (!rtc_is_initialized()) {
+        Serial.println("ERROR: RTC not initialized");
+        Serial.println("========================");
+        return SYS_ERROR;
+    }
+    
+    Serial.println("Attempting RTC recovery...");
+    SysError_t result = rtc_recovery_attempt();
+    
+    if (result == SYS_OK) {
+        Serial.println("✅ RTC recovery successful!");
+        
+        // Afficher le nouveau statut
+        RtcStatus_t status = rtc_get_status();
+        Serial.printf("New RTC Status: %s\n", rtc_get_status_string().c_str());
+        
+        if (status == RTC_STATUS_OK) {
+            time_t rtc_time = rtc_get_time();
+            if (rtc_time > 0) {
+                struct tm* timeinfo = localtime(&rtc_time);
+                Serial.printf("RTC Time: %04d-%02d-%02d %02d:%02d:%02d\n",
+                             timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                             timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+            }
+        }
+    } else {
+        Serial.println("❌ RTC recovery failed");
+        Serial.printf("Current RTC Status: %s\n", rtc_get_status_string().c_str());
+    }
+    
+    Serial.println("========================");
+    return result;
+}
+
+SysError_t cmd_time_status(int argc, char* argv[]) {
+    Serial.println("=== Time Status ===");
+    
+    if (!time_sync_is_initialized()) {
+        Serial.println("Time Sync: NOT INITIALIZED");
+        Serial.println("========================");
+        return SYS_ERROR;
+    }
+    
+    TimeSource_t source = time_sync_get_current_source();
+    Serial.printf("Time Source: ");
+    switch (source) {
+        case TIME_SOURCE_NTP:
+            Serial.println("NTP");
+            break;
+        case TIME_SOURCE_RTC:
+            Serial.println("RTC");
+            break;
+        case TIME_SOURCE_SYSTEM:
+            Serial.println("SYSTEM");
+            break;
+        default:
+            Serial.println("UNKNOWN");
+            break;
+    }
+    
+    time_t current_time = time_sync_get_current_time();
+    if (current_time > 0) {
+        Serial.printf("Current Time: %s\n", time_sync_format_current_time().c_str());
+    }
+    
+    Serial.println("========================");
+    return SYS_OK;
+}
+
+SysError_t cmd_time_sync(int argc, char* argv[]) {
+    Serial.println("=== Time Synchronization ===");
+    
+    if (!time_sync_is_initialized()) {
+        Serial.println("ERROR: Time sync not initialized");
+        Serial.println("=============================");
+        return SYS_ERROR;
+    }
+    
+    Serial.println("Forcing time synchronization...");
+    SysError_t result = time_sync_automatic();
+    
+    if (result == SYS_OK) {
+        TimeSource_t source = time_sync_get_current_source();
+        Serial.printf("✅ Sync successful - Source: ");
+        switch (source) {
+            case TIME_SOURCE_NTP:
+                Serial.println("NTP");
+                break;
+            case TIME_SOURCE_RTC:
+                Serial.println("RTC");
+                break;
+            case TIME_SOURCE_SYSTEM:
+                Serial.println("SYSTEM");
+                break;
+            default:
+                Serial.println("UNKNOWN");
+                break;
+        }
+        
+        time_t current_time = time_sync_get_current_time();
+        if (current_time > 0) {
+            Serial.printf("Current Time: %s\n", time_sync_format_current_time().c_str());
+        }
+    } else {
+        Serial.println("❌ Sync failed");
+    }
+    
+    Serial.println("=============================");
+    return result;
+}
+
+SysError_t cmd_time_sources(int argc, char* argv[]) {
+    Serial.println("=== Time Sources Info ===");
+    
+    if (!time_sync_is_initialized()) {
+        Serial.println("ERROR: Time sync not initialized");
+        Serial.println("=============================");
+        return SYS_ERROR;
+    }
+    
+    Serial.println(time_sync_get_source_info().c_str());
+    Serial.println("=============================");
+    return SYS_OK;
+}
+
+SysError_t cmd_rtc_temp(int argc, char* argv[]) {
+    Serial.println("=== RTC Temperature ===");
+    
+    if (!rtc_is_initialized()) {
+        Serial.println("ERROR: RTC not initialized");
+        Serial.println("========================");
+        return SYS_ERROR;
+    }
+    
+    float temp = rtc_get_temperature();
+    if (temp > -999.0f) {
+        Serial.printf("RTC Temperature: %.1f°C\n", temp);
+    } else {
+        Serial.println("ERROR: Cannot read RTC temperature");
+    }
+    
+    Serial.println("========================");
+    return SYS_OK;
+}
+
+SysError_t cmd_rtc_battery(int argc, char* argv[]) {
+    Serial.println("=== RTC Battery Status ===");
+    
+    if (!rtc_is_initialized()) {
+        Serial.println("ERROR: RTC not initialized");
+        Serial.println("=========================");
+        return SYS_ERROR;
+    }
+    
+    bool battery_ok = rtc_is_battery_ok();
+    Serial.printf("RTC Battery: %s\n", battery_ok ? "OK" : "LOW");
+    
+    RtcStatus_t status = rtc_get_status();
+    if (status == RTC_STATUS_BATTERY_LOW) {
+        Serial.println("WARNING: RTC battery is low - time may be lost on power failure");
+    }
+    
+    Serial.println("=========================");
+    return SYS_OK;
+}
+
+SysError_t cmd_time_source(int argc, char* argv[]) {
+    Serial.println("=== Current Time Source ===");
+    
+    if (!time_sync_is_initialized()) {
+        Serial.println("ERROR: Time sync not initialized");
+        Serial.println("==============================");
+        return SYS_ERROR;
+    }
+    
+    TimeSource_t source = time_sync_get_current_source();
+    Serial.printf("Current Time Source: ");
+    switch (source) {
+        case TIME_SOURCE_NTP:
+            Serial.println("NTP (Network Time Protocol)");
+            break;
+        case TIME_SOURCE_RTC:
+            Serial.println("RTC (Real-Time Clock)");
+            break;
+        case TIME_SOURCE_SYSTEM:
+            Serial.println("SYSTEM (Internal Clock)");
+            break;
+        case TIME_SOURCE_UNKNOWN:
+            Serial.println("UNKNOWN (No valid source)");
+            break;
+        default:
+            Serial.println("UNKNOWN");
+            break;
+    }
+    
+    TimeSyncStatus_t sync_status = time_sync_get_status();
+    Serial.printf("Sync Status: ");
+    switch (sync_status) {
+        case TIME_SYNC_STATUS_OK:
+            Serial.println("OK");
+            break;
+        case TIME_SYNC_STATUS_DEGRADED_MODE:
+            Serial.println("DEGRADED (Using fallback source)");
+            break;
+        case TIME_SYNC_STATUS_ERROR:
+            Serial.println("ERROR");
+            break;
+        case TIME_SYNC_STATUS_NO_SOURCE:
+            Serial.println("NO SOURCE");
+            break;
+        default:
+            Serial.println("UNKNOWN");
+            break;
+    }
+    
+    Serial.println("==============================");
+    return SYS_OK;
+}
 

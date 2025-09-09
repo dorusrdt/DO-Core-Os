@@ -88,6 +88,16 @@ SysError_t cmd_http_test(int argc, char* argv[]);
 SysError_t cmd_http_stats(int argc, char* argv[]);
 SysError_t cmd_http_debug(int argc, char* argv[]);
 
+// Commandes RTC et Time Sync
+SysError_t cmd_rtc_status(int argc, char* argv[]);
+SysError_t cmd_rtc_recovery(int argc, char* argv[]);
+SysError_t cmd_rtc_temp(int argc, char* argv[]);
+SysError_t cmd_rtc_battery(int argc, char* argv[]);
+SysError_t cmd_time_status(int argc, char* argv[]);
+SysError_t cmd_time_source(int argc, char* argv[]);
+SysError_t cmd_time_sync(int argc, char* argv[]);
+SysError_t cmd_time_sources(int argc, char* argv[]);
+
 // Reserved for future commands
 
 #endif // DO_CORE_INTERFACE_H 

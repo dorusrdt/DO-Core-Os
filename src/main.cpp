@@ -16,6 +16,8 @@
 #include "kernel/network/http_client.h"
 #include "kernel/app/app_manager.h"
 #include "kernel/core/minimal_config.h"
+#include "kernel/hal/rtc_manager.h"
+#include "kernel/hal/time_sync_manager.h"
 #include <time.h>
 
 // Variables globales du système
@@ -224,6 +226,30 @@ void system_main_task(void* parameter) {
     }
     
     SERIAL_PRINTLN_MINIMAL("Main task stop");
+    vTaskDelete(NULL);
+}
+
+// Tâche de synchronisation automatique du temps
+void time_sync_task(void* parameter) {
+    kernel_log(LOG_LEVEL_INFO, "Time sync task start");
+    
+    while (system_running) {
+        // Synchronisation automatique toutes les heures
+        SysError_t result = time_sync_automatic();
+        if (result == SYS_OK) {
+            TimeSource_t source = time_sync_get_current_source();
+            kernel_log(LOG_LEVEL_INFO, "Time sync OK - Source: %s", 
+                      (source == TIME_SOURCE_NTP) ? "NTP" :
+                      (source == TIME_SOURCE_RTC) ? "RTC" : "SYSTEM");
+        } else {
+            kernel_log(LOG_LEVEL_WARN, "Time sync failed");
+        }
+        
+        // Attendre 1 heure (3600000 ms)
+        vTaskDelay(pdMS_TO_TICKS(3600000));
+    }
+    
+    kernel_log(LOG_LEVEL_INFO, "Time sync task stop");
     vTaskDelete(NULL);
 }
 
@@ -455,6 +481,28 @@ void setup() {
     }
     SERIAL_PRINTLN_MINIMAL("HTTP Client OK");
 
+    // Initialiser le gestionnaire RTC DS3231
+    SERIAL_PRINTLN_MINIMAL("RTC init...");
+    SysError_t rtc_result = rtc_manager_init();
+    if (rtc_result != SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("RTC fail");
+        kernel_log(LOG_LEVEL_ERROR, "RTC Manager initialization failed");
+        // Continuer sans RTC (mode dégradé)
+    } else {
+        SERIAL_PRINTLN_MINIMAL("RTC OK");
+        kernel_log(LOG_LEVEL_INFO, "RTC Manager initialized successfully");
+    }
+
+    // Initialiser le gestionnaire de synchronisation du temps
+    SERIAL_PRINTLN_MINIMAL("Time sync init...");
+    SysError_t time_sync_result = time_sync_init();
+    if (time_sync_result != SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("Time sync fail");
+        kernel_log(LOG_LEVEL_ERROR, "Time Sync Manager initialization failed");
+        return;
+    }
+    SERIAL_PRINTLN_MINIMAL("Time sync OK");
+
     // Network initialization complete
 
     // Initialiser le gestionnaire d'applications
@@ -525,6 +573,22 @@ void setup() {
         return;
     }
 
+    // Synchronisation initiale du temps
+    SERIAL_PRINTLN_MINIMAL("Initial time sync...");
+    kernel_log(LOG_LEVEL_INFO, "Performing initial time synchronization");
+    SysError_t initial_sync_result = time_sync_automatic();
+    if (initial_sync_result == SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("Initial sync OK");
+        kernel_log(LOG_LEVEL_INFO, "Initial time synchronization successful");
+        
+        // Afficher l'heure actuelle
+        time_t current_time = time_sync_get_current_time();
+        kernel_log(LOG_LEVEL_INFO, "Current time: %s", time_sync_format_current_time().c_str());
+    } else {
+        SERIAL_PRINTLN_MINIMAL("Initial sync failed");
+        kernel_log(LOG_LEVEL_WARN, "Initial time synchronization failed");
+    }
+
     // Activer le système
     system_initialized = true;
     system_running = true;
@@ -549,6 +613,17 @@ void setup() {
     if (result == SYS_OK) {
         SERIAL_PRINTF_MINIMAL("WiFi task: %d\n", task_id);
         kernel_log(LOG_LEVEL_INFO, "WiFi task: %d", task_id);
+    } else {
+        SERIAL_PRINTLN_MINIMAL(MSG_TASK_FAIL);
+        kernel_log(LOG_LEVEL_ERROR, MSG_TASK_FAIL);
+    }
+    
+    // Tâche de synchronisation du temps
+    result = task_create_pinned_to_core("TimeSync", time_sync_task, NULL, 
+                                       PRIORITY_LOW, STACK_SIZE_SMALL, 0, &task_id);
+    if (result == SYS_OK) {
+        SERIAL_PRINTF_MINIMAL("Time sync task: %d\n", task_id);
+        kernel_log(LOG_LEVEL_INFO, "Time sync task: %d", task_id);
     } else {
         SERIAL_PRINTLN_MINIMAL(MSG_TASK_FAIL);
         kernel_log(LOG_LEVEL_ERROR, MSG_TASK_FAIL);
