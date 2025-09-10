@@ -184,8 +184,8 @@ SysError_t rtc_recovery_attempt(void) {
     g_rtc_recovery_attempts++;
     kernel_log(LOG_LEVEL_INFO, "RTC recovery attempt %d/5", g_rtc_recovery_attempts);
 
-    // Réinitialiser Wire
-    Wire.end();
+    // Réinitialiser Wire (Wire.end() n'existe pas dans espressif32@3.0.0)
+    // Wire.end();
     delay(100);
     Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
     Wire.setClock(100000);

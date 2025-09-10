@@ -85,7 +85,7 @@ SysError_t cmd_http_config(int argc, char* argv[]) {
             if (timeout_ms > 0) {
                 result = http_client.set_timeout(timeout_ms);
                 if (result == HTTP_CLIENT_OK) {
-                    Serial.printf("✅ Timeout set to: %lu ms\n", timeout_ms);
+                    Serial.printf("✅ Timeout set to: %u ms\n", timeout_ms);
                 }
             } else {
                 Serial.println("❌ Invalid timeout value (must be > 0)");
@@ -460,7 +460,7 @@ SysError_t cmd_http_debug(int argc, char* argv[]) {
         Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
     }
     
-    Serial.printf("Free Heap: %lu bytes\n", esp_get_free_heap_size());
+    Serial.printf("Free Heap: %u bytes\n", esp_get_free_heap_size());
     Serial.printf("System Uptime: %lu seconds\n", millis() / 1000);
     
     Serial.println("=====================================");

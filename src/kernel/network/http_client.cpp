@@ -439,7 +439,8 @@ HttpClientError_t HttpClientManager::send_request_internal(HttpRequest_t* reques
     
     // Configurer le client
     client.setTimeout(request->timeout_ms);
-    client.setFollowRedirects(request->follow_redirects ? HTTPC_FORCE_FOLLOW_REDIRECTS : HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    // setFollowRedirects n'est pas disponible dans espressif32@3.0.0
+    // client.setFollowRedirects(request->follow_redirects ? HTTPC_FORCE_FOLLOW_REDIRECTS : HTTPC_DISABLE_FOLLOW_REDIRECTS);
     
     // Ajouter les headers par défaut
     add_default_headers(client, request->headers);
@@ -675,14 +676,14 @@ void HttpClientManager::print_stats(void) {
     }
     
     Serial.println("=== HTTP Client Statistics ===");
-    Serial.printf("Total requests: %lu\n", current_stats.total_requests);
-    Serial.printf("Successful: %lu\n", current_stats.successful_requests);
-    Serial.printf("Failed: %lu\n", current_stats.failed_requests);
-    Serial.printf("Timeout errors: %lu\n", current_stats.timeout_errors);
-    Serial.printf("Connection errors: %lu\n", current_stats.connection_errors);
-    Serial.printf("Average response time: %lu ms\n", current_stats.average_response_time);
-    Serial.printf("Total bytes sent: %lu\n", current_stats.total_bytes_sent);
-    Serial.printf("Total bytes received: %lu\n", current_stats.total_bytes_received);
+    Serial.printf("Total requests: %u\n", current_stats.total_requests);
+    Serial.printf("Successful: %u\n", current_stats.successful_requests);
+    Serial.printf("Failed: %u\n", current_stats.failed_requests);
+    Serial.printf("Timeout errors: %u\n", current_stats.timeout_errors);
+    Serial.printf("Connection errors: %u\n", current_stats.connection_errors);
+    Serial.printf("Average response time: %u ms\n", current_stats.average_response_time);
+    Serial.printf("Total bytes sent: %u\n", current_stats.total_bytes_sent);
+    Serial.printf("Total bytes received: %u\n", current_stats.total_bytes_received);
     Serial.println("=============================");
 }
 
@@ -712,7 +713,7 @@ void HttpClientManager::print_debug_info(void) {
     Serial.println("=== HTTP Client Debug Info ===");
     Serial.printf("Server URL: %s\n", config.server_url);
     Serial.printf("Port: %d\n", config.port);
-    Serial.printf("Timeout: %lu ms\n", config.timeout_ms);
+    Serial.printf("Timeout: %u ms\n", config.timeout_ms);
     Serial.printf("Retry count: %d\n", config.retry_count);
     Serial.printf("SSL: %s\n", config.use_ssl ? "Yes" : "No");
     Serial.printf("Enabled: %s\n", config.enabled ? "Yes" : "No");
@@ -902,8 +903,8 @@ void http_print_response_summary(const HttpResponse_t* response) {
         Serial.printf("Error: %s\n", response->error_message);
     }
     
-    Serial.printf("Response time: %lu ms\n", response->response_time_ms);
-    Serial.printf("Content length: %lu bytes\n", response->content_length);
+    Serial.printf("Response time: %u ms\n", response->response_time_ms);
+    Serial.printf("Content length: %u bytes\n", response->content_length);
     
     if (strlen(response->body) > 0) {
         Serial.printf("Body: %s\n", response->body);
