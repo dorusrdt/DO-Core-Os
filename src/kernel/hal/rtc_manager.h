@@ -10,6 +10,7 @@
 #define RTC_SCL_PIN 26
 #define RTC_I2C_ADDRESS 0x68
 
+
 // États du RTC
 typedef enum {
     RTC_STATUS_UNINITIALIZED = 0,

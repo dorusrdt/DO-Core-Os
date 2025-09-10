@@ -68,6 +68,7 @@ SysError_t rtc_manager_init(void) {
     } else {
         g_rtc_status = RTC_STATUS_OK;
     }
+    
 
     g_rtc_initialized = true;
     g_rtc_recovery_attempts = 0;
@@ -222,3 +223,4 @@ String rtc_get_status_string(void) {
             return "UNKNOWN";
     }
 }
+
