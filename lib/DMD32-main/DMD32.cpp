@@ -428,8 +428,8 @@ void DMD::drawTestPattern(byte bPattern)
 void DMD::scanDisplayBySPI()
 {
     //if PIN_OTHER_SPI_nCS is in use during a DMD scan request then scanDisplayBySPI() will exit without conflict! (and skip that scan)
-//    if( digitalRead( PIN_OTHER_SPI_nCS ) == HIGH )
-//    {
+   if( digitalRead( PIN_OTHER_SPI_nCS ) == HIGH )
+   {
         //SPI transfer pixels to the display hardware shift registers
         int rowsize=DisplaysTotal<<2;
         int offset=rowsize * bDMDByte;
@@ -466,7 +466,7 @@ void DMD::scanDisplayBySPI()
             break;
         }
         OE_DMD_ROWS_ON();
-// }
+    }
 }
 
 void DMD::selectFont(const uint8_t * font)
