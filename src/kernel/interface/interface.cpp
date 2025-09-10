@@ -683,10 +683,63 @@ SysError_t cmd_wifi(int argc, char* argv[]) {
             if (argc >= 4) {
                 // wifi connect <ssid> <password>
                 Serial.printf("Connecting to WiFi network: %s\n", argv[2]);
-                // Note: Pour l'instant, on utilise la configuration par défaut
-                // TODO: Implémenter la configuration dynamique
-                WifiStatus_t result = wifi_manager_connect();
-                Serial.printf("Connection result: %d\n", result);
+                
+                // Utiliser la fonction connect_to_wifi qui gère la sauvegarde automatique
+                extern SysError_t connect_to_wifi(const char* ssid, const char* password);
+                SysError_t result = connect_to_wifi(argv[2], argv[3]);
+                
+                if (result == SYS_OK) {
+                    Serial.println("✅ WiFi connection successful!");
+                    Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+                    Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
+                    Serial.println("Credentials automatically saved for next boot");
+                    
+                    // Synchronisation NTP automatique après connexion WiFi
+                    Serial.println("🕐 Synchronizing time with NTP...");
+                    extern NtpStatus_t ntp_sync(void);
+                    extern bool ntp_is_synced(void);
+                    extern time_t ntp_get_time(void);
+                    extern String ntp_format_time(time_t timestamp, const char* format);
+                    
+                    NtpStatus_t ntp_result = NTP_STATUS_FAILED;
+                    const int max_retries = 3;
+                    const int timeout_ms = 30000; // 30 secondes
+                    
+                    for (int retry = 1; retry <= max_retries; retry++) {
+                        Serial.printf("NTP sync attempt %d/%d...\n", retry, max_retries);
+                        
+                        unsigned long start_time = millis();
+                        ntp_result = ntp_sync();
+                        
+                        // Attendre la synchronisation avec timeout
+                        while (!ntp_is_synced() && (millis() - start_time) < timeout_ms) {
+                            delay(500);
+                            Serial.print(".");
+                        }
+                        Serial.println();
+                        
+                        if (ntp_is_synced()) {
+                            time_t current_time = ntp_get_time();
+                            Serial.printf("✅ NTP sync successful! Time: %s\n", 
+                                        ntp_format_time(current_time, "%Y-%m-%d %H:%M:%S").c_str());
+                            break;
+                        } else {
+                            Serial.printf("❌ NTP sync attempt %d failed\n", retry);
+                            if (retry < max_retries) {
+                                Serial.println("Retrying in 2 seconds...");
+                                delay(2000);
+                            }
+                        }
+                    }
+                    
+                    if (!ntp_is_synced()) {
+                        Serial.println("⚠️ NTP sync failed after all retries");
+                        Serial.println("System will continue with RTC time");
+                    }
+                } else {
+                    Serial.println("❌ WiFi connection failed");
+                    Serial.println("Check SSID and password");
+                }
             } else {
                 Serial.println("Usage: wifi connect <ssid> <password>");
                 return SYS_INVALID_PARAM;
