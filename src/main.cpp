@@ -406,7 +406,7 @@ void display_system_logo() {
 }
 
 void setup() {
-    Serial.begin(9600);
+    Serial.begin(115200);
     delay(1000);
     
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Init ===");
