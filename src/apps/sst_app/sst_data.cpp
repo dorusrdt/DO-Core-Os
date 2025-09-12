@@ -59,9 +59,10 @@ SysError_t sst_data_load(void) {
     sst_data.date_dernier_accident = doc["date_dernier_accident"] | 0;
     sst_data.jours_sans_accident = doc["jours_sans_accident"] | 0;
     sst_data.record_jours_sans_accident = doc["record_jours_sans_accident"] | 0;
-    sst_data.heures_travaillees = doc["heures_travaillees"] | 0;
+    sst_data.heures_travaillees = doc["heures_travaillees"] | 0.0f;
     sst_data.taux_frequence = doc["taux_frequence"] | 0.0;
-    sst_data.heures_par_jour = doc["heures_par_jour"] | SST_DEFAULT_HOURS_PER_DAY;
+    sst_data.heure_incrementation = doc["heure_incrementation"] | SST_DEFAULT_INCREMENT_HOUR;
+    sst_data.heures_travaillees_par_jour = doc["heures_travaillees_par_jour"] | SST_DEFAULT_WORK_HOURS_PER_DAY;
     sst_data.derniere_incrementation = doc["derniere_incrementation"] | 0;
 
     // Liste des accidents
@@ -111,7 +112,8 @@ SysError_t sst_data_save(void) {
     doc["record_jours_sans_accident"] = sst_data.record_jours_sans_accident;
     doc["heures_travaillees"] = sst_data.heures_travaillees;
     doc["taux_frequence"] = sst_data.taux_frequence;
-    doc["heures_par_jour"] = sst_data.heures_par_jour;
+    doc["heure_incrementation"] = sst_data.heure_incrementation;
+    doc["heures_travaillees_par_jour"] = sst_data.heures_travaillees_par_jour;
     doc["derniere_incrementation"] = (uint32_t)sst_data.derniere_incrementation;
 
     // Liste des accidents
@@ -162,7 +164,8 @@ SysError_t sst_data_reset_memory_only(void) {
     // Initialiser avec des valeurs par défaut
     memset(&sst_data, 0, sizeof(SSTData_t));
     
-    sst_data.heures_par_jour = SST_DEFAULT_HOURS_PER_DAY;
+    sst_data.heure_incrementation = SST_DEFAULT_INCREMENT_HOUR;
+    sst_data.heures_travaillees_par_jour = SST_DEFAULT_WORK_HOURS_PER_DAY;
     sst_data.derniere_incrementation = 0;
     sst_data.date_dernier_accident = 0;
     sst_data.jours_sans_accident = 0;
@@ -176,7 +179,7 @@ SysError_t sst_data_reset_memory_only(void) {
 
 // Calculer le taux de fréquence
 SysError_t sst_calculate_taux_frequence(void) {
-    if (sst_data.heures_travaillees == 0) {
+    if (sst_data.heures_travaillees == 0.0f) {
         sst_data.taux_frequence = 0.0;
     } else {
         // TF = (accidents_avec_arret × 1_000_000) / heures_travaillees
@@ -266,9 +269,10 @@ SysError_t sst_get_statistics(char* buffer, size_t buffer_size) {
             "Total accidents: %u\n"
             "  - Avec arret: %u\n"
             "  - Sans arret: %u\n"
-            "Heures travaillees: %u\n"
+            "Heures travaillees: %.2f\n"
             "Taux de frequence: %.2f\n"
-            "Heures par jour: %u\n",
+            "Heure d'incrementation: %u\n"
+            "Heures travaillees par jour: %.2f\n",
             sst_data.jours_sans_accident,
             sst_data.record_jours_sans_accident,
             sst_data.total_accidents,
@@ -276,7 +280,8 @@ SysError_t sst_get_statistics(char* buffer, size_t buffer_size) {
             sst_data.accidents_sans_arret,
             sst_data.heures_travaillees,
             sst_data.taux_frequence,
-            sst_data.heures_par_jour);
+            sst_data.heure_incrementation,
+            sst_data.heures_travaillees_par_jour);
     
     return SYS_OK;
 }
@@ -462,4 +467,59 @@ SysError_t sst_add_accident_memory_only(bool avec_arret, const char* description
     
     SERIAL_PRINTLN_MINIMAL("SST Data: Accident added to memory");
     return SYS_OK;
+}
+
+// Vérifier s'il y a eu des accidents dans la période métier précédente
+bool sst_check_accidents_in_metier_period(void) {
+    // Obtenir l'heure actuelle
+    time_t current_time = rtc_get_time();
+    if (current_time == 0) {
+        current_time = time(nullptr);
+    }
+    if (current_time == 0) {
+        SERIAL_PRINTLN_MINIMAL("SST Data: No time source available for accident check");
+        return false; // En cas de doute, on considère qu'il n'y a pas d'accident
+    }
+    
+    // Calculer le début de la période métier précédente
+    // Période métier = de l'heure d'incrémentation d'hier à l'heure d'incrémentation d'aujourd'hui
+    struct tm* tm_info = localtime(&current_time);
+    
+    // Extraire l'heure d'incrémentation configurée
+    uint32_t target_hour = sst_data.heure_incrementation / 100;
+    uint32_t target_minute = sst_data.heure_incrementation % 100;
+    
+    // Définir l'heure d'incrémentation d'aujourd'hui
+    tm_info->tm_hour = target_hour;
+    tm_info->tm_min = target_minute;
+    tm_info->tm_sec = 0;
+    time_t today_increment_time = mktime(tm_info);
+    
+    // Si l'heure d'incrémentation est déjà passée aujourd'hui, 
+    // la période métier a commencé hier à la même heure
+    time_t period_start;
+    if (today_increment_time <= current_time) {
+        // Période métier = d'hier à l'heure d'incrémentation jusqu'à aujourd'hui à l'heure d'incrémentation
+        period_start = today_increment_time - 86400; // -24h
+    } else {
+        // Période métier = d'avant-hier à l'heure d'incrémentation jusqu'à hier à l'heure d'incrémentation
+        period_start = today_increment_time - (2 * 86400); // -48h
+    }
+    
+    SERIAL_PRINTF_MINIMAL("SST Data: Checking accidents in metier period from %s to %s\n", 
+                         ctime(&period_start), ctime(&today_increment_time));
+    
+    // Vérifier tous les accidents dans cette période
+    for (uint32_t i = 0; i < sst_data.nb_accidents; i++) {
+        Accident_t* accident = &sst_data.accidents[i];
+        
+        if (accident->date >= period_start && accident->date < today_increment_time) {
+            SERIAL_PRINTF_MINIMAL("SST Data: Accident found in metier period: ID %u, Date: %s\n", 
+                                 accident->id, ctime(&accident->date));
+            return true; // Accident trouvé dans la période métier
+        }
+    }
+    
+    SERIAL_PRINTLN_MINIMAL("SST Data: No accidents found in metier period");
+    return false; // Aucun accident dans la période métier
 }

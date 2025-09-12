@@ -219,6 +219,7 @@ SysError_t interface_init(void) {
     add_command("sst_statistiques", "Show SST statistics", cmd_sst_statistiques);
     add_command("sst_reset", "Reset SST data", cmd_sst_reset);
     add_command("sst_status", "Show SST status", cmd_sst_status);
+    add_command("sst_config_heures_travail", "Configure work hours", cmd_sst_config_heures_travail);
     
     // Commandes RTC et Time Sync simples
     add_command("rtc_status", "Show RTC status and time", cmd_rtc_status);

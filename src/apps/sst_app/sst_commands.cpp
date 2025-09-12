@@ -87,8 +87,8 @@ SysError_t cmd_sst_config_heures(int argc, char* argv[]) {
     
     sst_data.derniere_incrementation = increment_time;
     
-    // Stocker l'heure d'incrémentation dans heures_par_jour (format HHMM)
-    sst_data.heures_par_jour = heure * 100 + minute;
+    // Stocker l'heure d'incrémentation (format HHMM)
+    sst_data.heure_incrementation = heure * 100 + minute;
     
     // Sauvegarder la configuration
     SysError_t result = sst_data_save();
@@ -102,7 +102,33 @@ SysError_t cmd_sst_config_heures(int argc, char* argv[]) {
     return result;
 }
 
-
+// Commande: sst_config_heures_travail HOURS
+SysError_t cmd_sst_config_heures_travail(int argc, char* argv[]) {
+    if (argc != 2) {
+        Serial.println("Usage: sst_config_heures_travail HOURS");
+        Serial.println("Exemple: sst_config_heures_travail 8.5");
+        return SYS_INVALID_PARAM;
+    }
+    
+    float heures = atof(argv[1]);
+    
+    if (heures <= 0 || heures > 24) {
+        Serial.println("Erreur: Les heures doivent etre entre 0 et 24");
+        return SYS_INVALID_PARAM;
+    }
+    
+    sst_data.heures_travaillees_par_jour = heures;
+    
+    // Sauvegarder la configuration
+    SysError_t result = sst_data_save();
+    if (result == SYS_OK) {
+        Serial.printf("Heures travaillees par jour configurees: %.2f heures\n", heures);
+    } else {
+        Serial.println("Erreur lors de la sauvegarde");
+    }
+    
+    return result;
+}
 
 // Commande: sst_liste_accidents
 SysError_t cmd_sst_liste_accidents(int argc, char* argv[]) {
@@ -154,9 +180,10 @@ SysError_t cmd_sst_status(int argc, char* argv[]) {
     Serial.printf("Total accidents: %u\n", sst_data.total_accidents);
     Serial.printf("  - Avec arret: %u\n", sst_data.accidents_avec_arret);
     Serial.printf("  - Sans arret: %u\n", sst_data.accidents_sans_arret);
-    Serial.printf("Heures travaillees: %u\n", sst_data.heures_travaillees);
+    Serial.printf("Heures travaillees: %.2f\n", sst_data.heures_travaillees);
     Serial.printf("Taux de frequence: %.2f\n", sst_data.taux_frequence);
-    Serial.printf("Heures par jour: %u\n", sst_data.heures_par_jour);
+    Serial.printf("Heure d'incrementation: %u\n", sst_data.heure_incrementation);
+    Serial.printf("Heures travaillees par jour: %.2f\n", sst_data.heures_travaillees_par_jour);
     
     return SYS_OK;
 }

@@ -259,8 +259,8 @@ void sst_app_loop(void) {
             
             SERIAL_PRINTF_MINIMAL("SST Loop: Current time: %02u:%02u (day %u) - Source: %s\n", 
                                  current_hour, current_minute, current_day, source_name);
-            SERIAL_PRINTF_MINIMAL("SST Loop: heures_par_jour: %u, increment_done_today: %s\n", 
-                                 sst_data.heures_par_jour, increment_done_today ? "true" : "false");
+            SERIAL_PRINTF_MINIMAL("SST Loop: heure_incrementation: %u, increment_done_today: %s\n", 
+                                 sst_data.heure_incrementation, increment_done_today ? "true" : "false");
             
             // Vérifier si on a changé de jour
             if (current_day != last_check_day) {
@@ -269,10 +269,10 @@ void sst_app_loop(void) {
                 SERIAL_PRINTF_MINIMAL("SST Loop: New day detected (day %u) - Time source: %s\n", current_day, source_name);
             }
             
-            // Vérifier si l'heure d'incrémentation est arrivée (fenêtre de ±5 minutes)
-            if (!increment_done_today && sst_data.heures_par_jour > 0) {
-                uint32_t target_hour = sst_data.heures_par_jour / 100;    // Heures (ex: 8)
-                uint32_t target_minute = sst_data.heures_par_jour % 100;  // Minutes (ex: 30)
+            // Vérifier si l'heure d'incrémentation est arrivée (fenêtre de ±1 minute)
+            if (!increment_done_today && sst_data.heure_incrementation > 0) {
+                uint32_t target_hour = sst_data.heure_incrementation / 100;    // Heures (ex: 8)
+                uint32_t target_minute = sst_data.heure_incrementation % 100;  // Minutes (ex: 0)
                 
                 SERIAL_PRINTF_MINIMAL("SST Loop: Target time: %02u:%02u\n", target_hour, target_minute);
                 
@@ -285,11 +285,21 @@ void sst_app_loop(void) {
                     SERIAL_PRINTF_MINIMAL("SST Loop: Increment window reached! Current: %02u:%02u, Target: %02u:%02u\n", 
                                          current_hour, current_minute, target_hour, target_minute);
                     
-                    // Incrémenter les jours sans accident
-                    sst_data.jours_sans_accident++;
+                    // Vérifier s'il y a eu des accidents dans la période métier précédente
+                    bool accident_dans_periode_metier = sst_check_accidents_in_metier_period();
                     
-                    // Incrémenter les heures travaillées
-                    sst_data.heures_travaillees += sst_data.heures_par_jour;
+                    if (!accident_dans_periode_metier) {
+                        // Incrémenter les jours sans accident (jour métier)
+                        sst_data.jours_sans_accident++;
+                        
+                        // Incrémenter les heures travaillées (utiliser la valeur configurée)
+                        sst_data.heures_travaillees += sst_data.heures_travaillees_par_jour;
+                        
+                        SERIAL_PRINTF_MINIMAL("SST Loop: Jour métier incrémenté! Jours sans accident: %u, Heures ajoutées: %.2f\n", 
+                                             sst_data.jours_sans_accident, sst_data.heures_travaillees_par_jour);
+                    } else {
+                        SERIAL_PRINTLN_MINIMAL("SST Loop: Accident détecté dans la période métier - Pas d'incrémentation");
+                    }
                     
                     // Mettre à jour le record si nécessaire
                     if (sst_data.jours_sans_accident > sst_data.record_jours_sans_accident) {
@@ -305,7 +315,7 @@ void sst_app_loop(void) {
                     // Sauvegarder
                     sst_data_save();
                     
-                    SERIAL_PRINTF_MINIMAL("SST Loop: Daily increment done! Days: %u, Hours: %u\n", 
+                    SERIAL_PRINTF_MINIMAL("SST Loop: Daily increment done! Days: %u, Hours: %.2f\n", 
                                          sst_data.jours_sans_accident, sst_data.heures_travaillees);
                 } else {
                     SERIAL_PRINTF_MINIMAL("SST Loop: Not in increment window (diff: %d min, need <= 5)\n", abs(time_diff));
@@ -314,7 +324,7 @@ void sst_app_loop(void) {
                 if (increment_done_today) {
                     SERIAL_PRINTLN_MINIMAL("SST Loop: Increment already done today");
                 } else {
-                    SERIAL_PRINTF_MINIMAL("SST Loop: heures_par_jour is 0 (value: %u)\n", sst_data.heures_par_jour);
+                    SERIAL_PRINTF_MINIMAL("SST Loop: heure_incrementation is 0 (value: %u)\n", sst_data.heure_incrementation);
                 }
             }
         } else {
