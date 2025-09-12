@@ -12,7 +12,7 @@
 #include <string.h>
 
 // Inclure les commandes SST
-// #include "interface.h"  // SST commands are already declared in interface.h
+#include "../../apps/sst_app/sst_commands.h"
 
 // Inclure les commandes HTTP
 extern SysError_t cmd_http_config(int argc, char* argv[]);
@@ -210,6 +210,15 @@ SysError_t interface_init(void) {
     add_command("http_debug", "Debug HTTP client", cmd_http_debug);
     
     add_command("network_test", "Test network connectivity and DNS resolution", cmd_network_test);
+    
+    // Commandes SST
+    add_command("sst_accident_avec_arret", "Add accident with stop", cmd_sst_accident_avec_arret);
+    add_command("sst_accident_sans_arret", "Add accident without stop", cmd_sst_accident_sans_arret);
+    add_command("sst_config_heures", "Configure increment time (HH MM)", cmd_sst_config_heures);
+    add_command("sst_liste_accidents", "Show accidents list", cmd_sst_liste_accidents);
+    add_command("sst_statistiques", "Show SST statistics", cmd_sst_statistiques);
+    add_command("sst_reset", "Reset SST data", cmd_sst_reset);
+    add_command("sst_status", "Show SST status", cmd_sst_status);
     
     // Commandes RTC et Time Sync simples
     add_command("rtc_status", "Show RTC status and time", cmd_rtc_status);

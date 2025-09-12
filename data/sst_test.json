@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "compteurs": {
+    "total_accidents": 2,
+    "accidents_avec_arret": 1,
+    "accidents_sans_arret": 1
+  },
+  "dates": {
+    "date_dernier_accident": 1640995200,
+    "jours_sans_accident": 0,
+    "record_jours_sans_accident": 15
+  },
+  "calculs": {
+    "heures_travaillees": 120,
+    "taux_frequence": 8.33
+  },
+  "configuration": {
+    "heures_par_jour": 8,
+    "derniere_incrementation": 1640995200
+  },
+  "accidents": [
+    {
+      "id": 1,
+      "date": 1640995200,
+      "avec_arret": true,
+      "description": "Chute d'échelle"
+    },
+    {
+      "id": 2,
+      "date": 1641081600,
+      "avec_arret": false,
+      "description": "Coupure légère"
+    }
+  ]
+}

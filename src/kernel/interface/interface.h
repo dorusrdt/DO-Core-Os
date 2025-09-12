@@ -10,7 +10,7 @@
 
 // Structure d'une commande
 typedef struct {
-    char name[16];
+    char name[32];  // Augmenté de 16 à 32 pour les commandes SST longues
     char description[32];
     SysError_t (*handler)(int argc, char* argv[]);
 } Command_t;
@@ -70,6 +70,15 @@ SysError_t cmd_app_resume_all(int argc, char* argv[]);
 
 // Commandes réseau
 SysError_t cmd_network_test(int argc, char* argv[]);
+
+// Commandes SST
+SysError_t cmd_sst_accident_avec_arret(int argc, char* argv[]);
+SysError_t cmd_sst_accident_sans_arret(int argc, char* argv[]);
+SysError_t cmd_sst_config_heures(int argc, char* argv[]);
+SysError_t cmd_sst_liste_accidents(int argc, char* argv[]);
+SysError_t cmd_sst_statistiques(int argc, char* argv[]);
+SysError_t cmd_sst_reset(int argc, char* argv[]);
+SysError_t cmd_sst_status(int argc, char* argv[]);
 
 // Network commands - To be implemented
 

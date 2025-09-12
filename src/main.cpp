@@ -16,6 +16,7 @@
 #include "kernel/network/http_client.h"
 #include "kernel/app/app_manager.h"
 #include "kernel/core/minimal_config.h"
+#include "apps/sst_app/sst_app.h"
 #include "kernel/hal/rtc_manager.h"
 #include "kernel/hal/time_sync_manager.h"
 #include <time.h>
@@ -405,7 +406,7 @@ void display_system_logo() {
 }
 
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(9600);
     delay(1000);
     
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Init ===");
@@ -510,6 +511,17 @@ void setup() {
     if (app_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL(MSG_APP_FAIL);
         return;
+    }
+
+    // Enregistrer l'application SST
+    uint8_t sst_app_id;
+    SysError_t sst_result = sst_app_register(&sst_app_id);
+    if (sst_result == SYS_OK) {
+        SERIAL_PRINTF_MINIMAL("SST App registered with ID: %d\n", sst_app_id);
+        kernel_log(LOG_LEVEL_INFO, "SST App registered with ID: %d", sst_app_id);
+    } else {
+        SERIAL_PRINTLN_MINIMAL("SST App registration failed");
+        kernel_log(LOG_LEVEL_ERROR, "SST App registration failed");
     }
 
     // Initialiser le WiFi (sans connexion automatique)
