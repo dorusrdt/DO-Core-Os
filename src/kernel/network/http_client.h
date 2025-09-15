@@ -156,8 +156,8 @@ public:
     void print_debug_info(void);
     
     // Persistance
-    HttpClientError_t save_config_to_nvs(void);
-    HttpClientError_t load_config_from_nvs(void);
+    HttpClientError_t save_config_to_spiffs(void);
+    HttpClientError_t load_config_from_spiffs(void);
 };
 
 // Instance globale

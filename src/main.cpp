@@ -4,7 +4,6 @@
 #include <esp_system.h>
 #include <esp_event.h>
 #include <nvs_flash.h>
-#include <Preferences.h>
 #include "kernel/core/kernel.h"
 #include "kernel/core/task_manager.h"
 #include "kernel/core/memory_manager.h"
@@ -12,6 +11,7 @@
 #include "kernel/core/system_monitor.h"
 #include "kernel/interface/interface.h"
 #include "kernel/network/wifi_manager.h"
+#include "kernel/network/wifi_persistence.h"
 #include "kernel/network/ntp_manager.h"
 #include "kernel/network/http_client.h"
 #include "kernel/app/app_manager.h"
@@ -34,8 +34,10 @@
 
 // Variables globales DMD
 DMD dmd(DISPLAYS_ACROSS, DISPLAYS_DOWN);
+hw_timer_t * dmd_timer = NULL;
 TaskHandle_t dmd_task_handle = NULL;
-static bool dmd_task_running = false;
+volatile bool dmd_task_running = false;
+volatile bool dmd_refresh_needed = false;
 
 // Pas d'animation de points - utilisation d'une barre de progression simple
 
@@ -43,99 +45,28 @@ static bool dmd_task_running = false;
 static bool system_initialized = false;
 volatile bool system_running = false;
 
-// Système de stockage persistant des credentials WiFi
-static Preferences wifi_prefs;
+// Le système de persistance WiFi est maintenant géré par wifi_persistence.h/cpp
 
-// Configuration WiFi stockée en mémoire
-struct WifiCredentials {
-    char ssid[32];
-    char password[64];
-    bool valid;
-};
-
-static WifiCredentials stored_credentials = {"", "", false};
-
-// Fonctions de gestion des credentials WiFi avec persistance
+// Fonctions de gestion des credentials WiFi avec persistance (wrappers pour compatibilité)
 SysError_t save_wifi_credentials(const char* ssid, const char* password) {
-    // Validation des paramètres
-    if (!ssid || !password) {
-        kernel_log(LOG_LEVEL_ERROR, "Invalid credentials: null pointer");
-        return SYS_INVALID_PARAM;
-    }
-    
-    if (strlen(ssid) == 0 || strlen(ssid) > 31) {
-        kernel_log(LOG_LEVEL_ERROR, "Invalid SSID length: %d (must be 1-31)", strlen(ssid));
-        return SYS_INVALID_PARAM;
-    }
-    
-    if (strlen(password) < 8 || strlen(password) > 63) {
-        kernel_log(LOG_LEVEL_ERROR, "Invalid password length: %d (must be 8-63)", strlen(password));
-        return SYS_INVALID_PARAM;
-    }
-    
-    // Sauvegarder en mémoire RAM
-    strncpy(stored_credentials.ssid, ssid, sizeof(stored_credentials.ssid) - 1);
-    strncpy(stored_credentials.password, password, sizeof(stored_credentials.password) - 1);
-    stored_credentials.valid = true;
-    
-    // Sauvegarder en mémoire flash (persistant)
-    wifi_prefs.begin("wifi", false);
-    bool flash_ok = wifi_prefs.putString("ssid", ssid) > 0 &&
-                   wifi_prefs.putString("password", password) > 0 &&
-                   wifi_prefs.putBool("valid", true);
-    wifi_prefs.end();
-    
-    if (flash_ok) {
-        kernel_log(LOG_LEVEL_INFO, "WiFi credentials saved to flash: SSID=%s", stored_credentials.ssid);
-        return SYS_OK;
-    } else {
-        kernel_log(LOG_LEVEL_ERROR, "Failed to save credentials to flash");
-        return SYS_ERROR;
-    }
+    return wifi_persistence_save_credentials(ssid, password);
 }
 
 bool load_wifi_credentials() {
-    // Charger depuis la mémoire flash
-    wifi_prefs.begin("wifi", true);
-    bool valid = wifi_prefs.getBool("valid", false);
-    
-    if (valid) {
-        String ssid = wifi_prefs.getString("ssid", "");
-        String password = wifi_prefs.getString("password", "");
-        
-        if (ssid.length() > 0 && password.length() > 0) {
-            strncpy(stored_credentials.ssid, ssid.c_str(), sizeof(stored_credentials.ssid) - 1);
-            strncpy(stored_credentials.password, password.c_str(), sizeof(stored_credentials.password) - 1);
-            stored_credentials.valid = true;
-            kernel_log(LOG_LEVEL_INFO, "WiFi credentials loaded from flash: SSID=%s", stored_credentials.ssid);
-        } else {
-            valid = false;
-        }
-    }
-    
-    wifi_prefs.end();
-    return valid;
+    SysError_t result = wifi_persistence_load_credentials();
+    return (result == SYS_OK) && wifi_persistence_has_credentials();
 }
 
 const char* get_stored_ssid() {
-    return stored_credentials.valid ? stored_credentials.ssid : nullptr;
+    return wifi_persistence_get_ssid();
 }
 
 const char* get_stored_password() {
-    return stored_credentials.valid ? stored_credentials.password : nullptr;
+    return wifi_persistence_get_password();
 }
 
 void clear_wifi_credentials() {
-    // Effacer de la mémoire RAM
-    memset(&stored_credentials, 0, sizeof(stored_credentials));
-    stored_credentials.valid = false;
-    
-    // Effacer de la mémoire flash
-    wifi_prefs.begin("wifi", false);
-    wifi_prefs.clear();
-    wifi_prefs.end();
-    
-    kernel_log(LOG_LEVEL_INFO, "WiFi credentials cleared from flash");
+    wifi_persistence_clear_credentials();
 }
 
 // Fonction de connexion WiFi avec sauvegarde automatique
@@ -293,9 +224,9 @@ void wifi_supervision_task(void* parameter) {
                           WiFi.localIP().toString().c_str(), current_rssi);
             } else {
                 kernel_log(LOG_LEVEL_WARN, "WiFi DIS");
-                if (load_wifi_credentials()) {
+                if (wifi_persistence_has_credentials()) {
                     kernel_log(LOG_LEVEL_INFO, "Reconnect with creds");
-                    WiFi.begin(get_stored_ssid(), get_stored_password());
+                    WiFi.begin(wifi_persistence_get_ssid(), wifi_persistence_get_password());
                 } else {
                     kernel_log(LOG_LEVEL_INFO, "No creds - manual needed");
                 }
@@ -339,15 +270,20 @@ void wifi_supervision_task(void* parameter) {
             last_rssi = current_rssi;
         }
         
-        // Tentative de reconnexion si déconnecté
-        if (!is_connected && load_wifi_credentials()) {
+        // Tentative de reconnexion si déconnecté (optimisé)
+        if (!is_connected) {
             reconnect_attempts++;
             
             if (reconnect_attempts % 60 == 0) { // Toutes les 60 secondes au lieu de 30
-                kernel_log(LOG_LEVEL_INFO, "Reconnect %d", reconnect_attempts / 60);
-                WiFi.disconnect();
-                delay(1000);
-                WiFi.begin(get_stored_ssid(), get_stored_password());
+                // Vérifier les credentials seulement quand nécessaire
+                if (wifi_persistence_has_credentials()) {
+                    kernel_log(LOG_LEVEL_INFO, "Reconnect %d", reconnect_attempts / 60);
+                    WiFi.disconnect();
+                    delay(1000);
+                    WiFi.begin(wifi_persistence_get_ssid(), wifi_persistence_get_password());
+                } else {
+                    kernel_log(LOG_LEVEL_INFO, "No credentials for reconnect");
+                }
             }
         } else if (is_connected) {
             reconnect_attempts = 0; // Reset counter when connected
@@ -365,16 +301,24 @@ void wifi_supervision_task(void* parameter) {
 // GESTION DMD POUR L'ANIMATION DE BOOT
 // ============================================================================
 
-// Task de rafraîchissement DMD (au lieu d'ISR)
+// ISR ultra-rapide (juste un flag - pas d'appel SPI direct)
+void IRAM_ATTR dmd_trigger_scan() {
+    dmd_refresh_needed = true;  // Juste un flag (1 byte)
+}
+
+// Tâche de rafraîchissement DMD (ISR + Flag optimisé)
 void dmd_refresh_task(void* pvParameters) {
-    SERIAL_PRINTLN_MINIMAL("DMD Task: Started");
+    SERIAL_PRINTLN_MINIMAL("DMD Task: Started (ISR + Flag mode)");
 
     while (dmd_task_running) {
-        // Appeler scanDisplayBySPI depuis la task (pas d'ISR)
-        dmd.scanDisplayBySPI();
-
-        // Délai pour contrôler la fréquence de rafraîchissement
-        vTaskDelay(pdMS_TO_TICKS(1)); // 1ms = ~1000 FPS max
+        // Se réveiller seulement si rafraîchissement nécessaire
+        if (dmd_refresh_needed) {
+            dmd.scanDisplayBySPI();  // Appelé depuis tâche (sûr)
+            dmd_refresh_needed = false;  // Reset le flag
+        }
+        
+        // Attendre le prochain cycle (300µs = 0.3ms)
+        vTaskDelay(pdMS_TO_TICKS(1)); // 1ms = 1000 FPS max
     }
 
     SERIAL_PRINTLN_MINIMAL("DMD Task: Stopped");
@@ -388,7 +332,23 @@ void dmd_boot_init(void) {
     // clear/init the DMD pixels held in RAM
     dmd.clearScreen(true);
 
-    // Créer la task de rafraîchissement DMD
+    // Configuration du timer hardware (ISR + Flag optimisé)
+    uint8_t cpuClock = ESP.getCpuFreqMHz();
+    
+    // Utiliser le timer 0 de l'ESP32
+    dmd_timer = timerBegin(0, cpuClock, true);
+    
+    // Attacher la fonction ISR au timer
+    timerAttachInterrupt(dmd_timer, &dmd_trigger_scan, true);
+    
+    // Configurer l'alarme pour appeler dmd_trigger_scan
+    // 300µs = fréquence de rafraîchissement (comme dans les exemples)
+    timerAlarmWrite(dmd_timer, 300, true);
+    
+    // Activer l'alarme
+    timerAlarmEnable(dmd_timer);
+
+    // Créer la tâche de rafraîchissement DMD (ISR + Flag)
     dmd_task_running = true;
     BaseType_t result = xTaskCreatePinnedToCore(
         dmd_refresh_task,           // Fonction de la task
@@ -406,16 +366,33 @@ void dmd_boot_init(void) {
         return;
     }
 
-    SERIAL_PRINTLN_MINIMAL("Boot: DMD display initialized");
-    kernel_log(LOG_LEVEL_INFO, "Boot: DMD display initialized");
+    SERIAL_PRINTLN_MINIMAL("Boot: DMD display initialized with ISR + Flag");
+    kernel_log(LOG_LEVEL_INFO, "Boot: DMD display initialized with ISR + Flag");
 }
 
 // Arrêter la gestion DMD
 void dmd_boot_stop(void) {
+    // Arrêter la tâche
     if (dmd_task_handle) {
         dmd_task_running = false;
         vTaskDelete(dmd_task_handle);
         dmd_task_handle = NULL;
+    }
+    
+    // Arrêter le timer ISR
+    if (dmd_timer) {
+        // Désactiver l'alarme
+        timerAlarmDisable(dmd_timer);
+        
+        // Détacher l'interruption
+        timerDetachInterrupt(dmd_timer);
+        
+        // Arrêter le timer
+        timerEnd(dmd_timer);
+        
+        dmd_timer = NULL;
+        SERIAL_PRINTLN_MINIMAL("DMD Timer: Stopped");
+        kernel_log(LOG_LEVEL_INFO, "DMD Timer stopped");
     }
 }
 
@@ -638,8 +615,15 @@ void setup() {
     // Démarrer le monitoring
     system_monitor_start();
 
-    // Initialiser le gestionnaire de WiFi
+    // Initialiser le système de persistance WiFi
     update_boot_progress(6, 15, "WiFi");
+    SysError_t wifi_persist_result = wifi_persistence_init();
+    if (wifi_persist_result != SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("WiFi persistence init failed");
+        kernel_log(LOG_LEVEL_ERROR, "WiFi persistence init failed");
+    }
+    
+    // Initialiser le gestionnaire de WiFi
     wifi_manager_init(nullptr);
     SERIAL_PRINTLN_MINIMAL("WiFi init");
 
@@ -720,12 +704,12 @@ void setup() {
     update_boot_progress(13, 15, "WiFi ");
     SERIAL_PRINTLN_MINIMAL("Check saved WiFi...");
     kernel_log(LOG_LEVEL_INFO, "Check WiFi creds");
-    if (load_wifi_credentials()) {
-        SERIAL_PRINTF_MINIMAL("Found: %s\n", get_stored_ssid());
-        kernel_log(LOG_LEVEL_INFO, "Found creds: %s", get_stored_ssid());
+    if (wifi_persistence_has_credentials()) {
+        SERIAL_PRINTF_MINIMAL("Found: %s\n", wifi_persistence_get_ssid());
+        kernel_log(LOG_LEVEL_INFO, "Found creds: %s", wifi_persistence_get_ssid());
         SERIAL_PRINTLN_MINIMAL("Auto connect...");
 
-        if (connect_to_wifi(get_stored_ssid(), get_stored_password()) == SYS_OK) {
+        if (connect_to_wifi(wifi_persistence_get_ssid(), wifi_persistence_get_password()) == SYS_OK) {
             SERIAL_PRINTLN_MINIMAL("WiFi OK");
             kernel_log(LOG_LEVEL_INFO, "WiFi auto OK");
         } else {

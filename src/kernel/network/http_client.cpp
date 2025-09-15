@@ -1,6 +1,8 @@
 #include "http_client.h"
 #include "../core/log_system_optimized.h"
-#include <Preferences.h>
+#include <FS.h>
+#include <SPIFFS.h>
+#include <ArduinoJson.h>
 
 // Instance globale
 HttpClientManager http_client;
@@ -44,8 +46,8 @@ HttpClientError_t HttpClientManager::init(void) {
         return HTTP_CLIENT_ERROR_INIT;
     }
     
-    // Charger la configuration depuis NVS
-    load_config_from_nvs();
+    // Charger la configuration depuis SPIFFS
+    load_config_from_spiffs();
     
     initialized = true;
     kernel_log(LOG_LEVEL_INFO, "HTTP Client initialized");
@@ -90,8 +92,8 @@ HttpClientError_t HttpClientManager::set_config(const HttpClientConfig_t* new_co
     
     xSemaphoreGive(mutex);
     
-    // Sauvegarder en NVS
-    save_config_to_nvs();
+    // Sauvegarder en SPIFFS
+    save_config_to_spiffs();
     
     kernel_log(LOG_LEVEL_INFO, "HTTP Client config updated: %s", config.server_url);
     return HTTP_CLIENT_OK;
@@ -150,7 +152,7 @@ HttpClientError_t HttpClientManager::set_server_url(const char* url) {
     
     xSemaphoreGive(mutex);
     
-    save_config_to_nvs();
+    save_config_to_spiffs();
     kernel_log(LOG_LEVEL_INFO, "HTTP Client server URL: %s", config.server_url);
     return HTTP_CLIENT_OK;
 }
@@ -170,7 +172,7 @@ HttpClientError_t HttpClientManager::set_timeout(uint32_t timeout_ms) {
     
     xSemaphoreGive(mutex);
     
-    save_config_to_nvs();
+    save_config_to_spiffs();
     kernel_log(LOG_LEVEL_INFO, "HTTP Client timeout: %lu ms", config.timeout_ms);
     return HTTP_CLIENT_OK;
 }
@@ -190,7 +192,7 @@ HttpClientError_t HttpClientManager::set_retry_count(uint8_t count) {
     
     xSemaphoreGive(mutex);
     
-    save_config_to_nvs();
+    save_config_to_spiffs();
     kernel_log(LOG_LEVEL_INFO, "HTTP Client retry count: %d", config.retry_count);
     return HTTP_CLIENT_OK;
 }
@@ -214,7 +216,7 @@ HttpClientError_t HttpClientManager::set_api_key(const char* api_key) {
     
     xSemaphoreGive(mutex);
     
-    save_config_to_nvs();
+    save_config_to_spiffs();
     kernel_log(LOG_LEVEL_INFO, "HTTP Client API key set");
     return HTTP_CLIENT_OK;
 }
@@ -234,7 +236,7 @@ HttpClientError_t HttpClientManager::enable(bool enable) {
     
     xSemaphoreGive(mutex);
     
-    save_config_to_nvs();
+    save_config_to_spiffs();
     kernel_log(LOG_LEVEL_INFO, "HTTP Client %s", enable ? "enabled" : "disabled");
     return HTTP_CLIENT_OK;
 }
@@ -722,47 +724,82 @@ void HttpClientManager::print_debug_info(void) {
     Serial.println("=============================");
 }
 
-// Persistance
-HttpClientError_t HttpClientManager::save_config_to_nvs(void) {
-    Preferences prefs;
-    if (!prefs.begin("http_client", false)) {
+// Persistance avec SPIFFS
+HttpClientError_t HttpClientManager::save_config_to_spiffs(void) {
+    if (!SPIFFS.begin(true)) {
+        kernel_log(LOG_LEVEL_ERROR, "HTTP Client: SPIFFS not available");
         return HTTP_CLIENT_ERROR_MEMORY;
     }
     
-    bool success = prefs.putBytes("config", &config, sizeof(config)) == sizeof(config);
-    prefs.end();
-    
-    if (success) {
-        kernel_log(LOG_LEVEL_INFO, "HTTP Client config saved to NVS");
-        return HTTP_CLIENT_OK;
-    } else {
-        kernel_log(LOG_LEVEL_ERROR, "HTTP Client config save failed");
+    File file = SPIFFS.open("/http_client_config.json", FILE_WRITE);
+    if (!file) {
+        kernel_log(LOG_LEVEL_ERROR, "HTTP Client: Failed to open config file for writing");
         return HTTP_CLIENT_ERROR_MEMORY;
     }
+    
+    // Créer le document JSON
+    StaticJsonDocument<1024> doc;
+    doc["version"] = "1.0";
+    doc["enabled"] = config.enabled;
+    doc["server_url"] = config.server_url;
+    doc["timeout_ms"] = config.timeout_ms;
+    doc["retry_count"] = config.retry_count;
+    doc["api_key"] = config.api_key;
+    doc["checksum"] = config.checksum;
+    
+    // Écrire le JSON
+    if (serializeJson(doc, file) == 0) {
+        kernel_log(LOG_LEVEL_ERROR, "HTTP Client: Failed to write JSON");
+        file.close();
+        return HTTP_CLIENT_ERROR_MEMORY;
+    }
+    
+    file.close();
+    kernel_log(LOG_LEVEL_INFO, "HTTP Client config saved to SPIFFS");
+    return HTTP_CLIENT_OK;
 }
 
-HttpClientError_t HttpClientManager::load_config_from_nvs(void) {
-    Preferences prefs;
-    if (!prefs.begin("http_client", true)) {
+HttpClientError_t HttpClientManager::load_config_from_spiffs(void) {
+    if (!SPIFFS.begin(true)) {
+        kernel_log(LOG_LEVEL_ERROR, "HTTP Client: SPIFFS not available");
         return HTTP_CLIENT_ERROR_MEMORY;
     }
     
-    size_t bytes_read = prefs.getBytes("config", &config, sizeof(config));
-    prefs.end();
+    File file = SPIFFS.open("/http_client_config.json", FILE_READ);
+    if (!file) {
+        kernel_log(LOG_LEVEL_INFO, "HTTP Client: No config file found, using defaults");
+        reset_config();
+        return HTTP_CLIENT_OK;
+    }
     
-    if (bytes_read == sizeof(config)) {
-        // Valider le checksum
-        uint32_t calculated_checksum = calculate_checksum(&config, sizeof(config) - sizeof(config.checksum));
-        if (calculated_checksum == config.checksum) {
-            kernel_log(LOG_LEVEL_INFO, "HTTP Client config loaded from NVS");
-            return HTTP_CLIENT_OK;
-        } else {
-            kernel_log(LOG_LEVEL_WARN, "HTTP Client config checksum invalid, using defaults");
-            reset_config();
-            return HTTP_CLIENT_OK;
-        }
+    // Parser le JSON
+    StaticJsonDocument<1024> doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    
+    if (error) {
+        kernel_log(LOG_LEVEL_WARN, "HTTP Client: JSON parse error: %s", error.c_str());
+        reset_config();
+        return HTTP_CLIENT_OK;
+    }
+    
+    // Charger la configuration
+    config.enabled = doc["enabled"] | false;
+    strncpy(config.server_url, doc["server_url"] | "", sizeof(config.server_url) - 1);
+    config.server_url[sizeof(config.server_url) - 1] = '\0';
+    config.timeout_ms = doc["timeout_ms"] | 10000;
+    config.retry_count = doc["retry_count"] | 3;
+    strncpy(config.api_key, doc["api_key"] | "", sizeof(config.api_key) - 1);
+    config.api_key[sizeof(config.api_key) - 1] = '\0';
+    config.checksum = doc["checksum"] | 0;
+    
+    // Valider le checksum
+    uint32_t calculated_checksum = calculate_checksum(&config, sizeof(config) - sizeof(config.checksum));
+    if (calculated_checksum == config.checksum) {
+        kernel_log(LOG_LEVEL_INFO, "HTTP Client config loaded from SPIFFS");
+        return HTTP_CLIENT_OK;
     } else {
-        kernel_log(LOG_LEVEL_INFO, "HTTP Client config not found in NVS, using defaults");
+        kernel_log(LOG_LEVEL_WARN, "HTTP Client config checksum invalid, using defaults");
         reset_config();
         return HTTP_CLIENT_OK;
     }
