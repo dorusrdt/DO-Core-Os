@@ -21,6 +21,24 @@
 #include "kernel/hal/time_sync_manager.h"
 #include <time.h>
 
+// DMD includes pour l'animation de boot
+#include "../lib/DMD32-main/DMD32.h"
+#include "../lib/DMD32-main/fonts/SystemFont5x7.h"
+#include "../lib/DMD32-main/fonts/Arial_Black_16_ISO_8859_1.h"
+#include "animations/LoadingDotsAnimation.h"
+
+// Configuration DMD pour l'animation de boot
+#define DISPLAYS_ACROSS 1
+#define DISPLAYS_DOWN 1
+#define DMD_REFRESH_RATE 300
+
+// Variables globales DMD
+DMD dmd(DISPLAYS_ACROSS, DISPLAYS_DOWN);
+TaskHandle_t dmd_task_handle = NULL;
+static bool dmd_task_running = false;
+
+// Pas d'animation de points - utilisation d'une barre de progression simple
+
 // Variables globales du système
 static bool system_initialized = false;
 volatile bool system_running = false;
@@ -343,6 +361,154 @@ void wifi_supervision_task(void* parameter) {
     vTaskDelete(NULL);
 }
 
+// ============================================================================
+// GESTION DMD POUR L'ANIMATION DE BOOT
+// ============================================================================
+
+// Task de rafraîchissement DMD (au lieu d'ISR)
+void dmd_refresh_task(void* pvParameters) {
+    SERIAL_PRINTLN_MINIMAL("DMD Task: Started");
+
+    while (dmd_task_running) {
+        // Appeler scanDisplayBySPI depuis la task (pas d'ISR)
+        dmd.scanDisplayBySPI();
+
+        // Délai pour contrôler la fréquence de rafraîchissement
+        vTaskDelay(pdMS_TO_TICKS(1)); // 1ms = ~1000 FPS max
+    }
+
+    SERIAL_PRINTLN_MINIMAL("DMD Task: Stopped");
+    vTaskDelete(NULL);
+}
+
+// Initialisation de l'écran DMD pour l'animation de boot
+void dmd_boot_init(void) {
+    SERIAL_PRINTLN_MINIMAL("Boot: Initializing DMD display...");
+
+    // clear/init the DMD pixels held in RAM
+    dmd.clearScreen(true);
+
+    // Créer la task de rafraîchissement DMD
+    dmd_task_running = true;
+    BaseType_t result = xTaskCreatePinnedToCore(
+        dmd_refresh_task,           // Fonction de la task
+        "dmd_refresh_task",         // Nom de la task
+        2048,                       // Taille de la pile
+        NULL,                       // Paramètres
+        6,                          // Priorité (haute pour le rafraîchissement)
+        &dmd_task_handle,           // Handle de la task
+        1                           // Core 1 (même que les autres tasks)
+    );
+
+    if (result != pdPASS) {
+        SERIAL_PRINTLN_MINIMAL("Boot: Failed to create DMD task");
+        kernel_log(LOG_LEVEL_ERROR, "Boot: Failed to create DMD task");
+        return;
+    }
+
+    SERIAL_PRINTLN_MINIMAL("Boot: DMD display initialized");
+    kernel_log(LOG_LEVEL_INFO, "Boot: DMD display initialized");
+}
+
+// Arrêter la gestion DMD
+void dmd_boot_stop(void) {
+    if (dmd_task_handle) {
+        dmd_task_running = false;
+        vTaskDelete(dmd_task_handle);
+        dmd_task_handle = NULL;
+    }
+}
+
+// ============================================================================
+// ANIMATION DE BOOT MODERNE
+// ============================================================================
+
+// Afficher le logo S-T avec police Arial_Black_16_ISO_8859_1
+void display_boot_logo() {
+    dmd.clearScreen(true);
+    dmd.selectFont(Arial_Black_16_ISO_8859_1);
+
+    // Afficher "S-T" centré sur l'écran
+    // La police Arial_Black_16 fait 16px de hauteur, écran 32x16
+    // Centrer horizontalement et verticalement
+    dmd.drawString(8, 0, "ST", 3, GRAPHICS_NORMAL);
+}
+
+// Afficher l'étape en cours : "STEP_NAME"
+void display_boot_step(const char* step_name, bool is_error = false) {
+    // Effacer seulement la section haute (lignes 0-7)
+    for(int y = 0; y < 8; y++) {
+        for(int x = 0; x < 32; x++) {
+            dmd.writePixel(x, y, GRAPHICS_NORMAL, 0);
+        }
+    }
+
+    dmd.selectFont(System5x7);
+
+    // Afficher seulement le nom de l'étape (sans ">")
+    if (is_error) {
+        dmd.drawString(1,1, "ERROR", 5, GRAPHICS_NORMAL);
+    } else if (step_name) {
+        dmd.drawString(1,1, step_name, strlen(step_name), GRAPHICS_NORMAL);
+    }
+}
+
+
+// Afficher une barre de progression simple centrée (section basse)
+void display_progress_bar_centered(int percentage) {
+    // Effacer seulement la section basse (lignes 8-15)
+    for(int y = 8; y < 16; y++) {
+        for(int x = 0; x < 32; x++) {
+            dmd.writePixel(x, y, GRAPHICS_NORMAL, 0);
+        }
+    }
+
+    // Barre de progression centrée (20 pixels de largeur, centrée)
+    int bar_width = 20;
+    int bar_start_x = (32 - bar_width) / 2;  // Centrer la barre
+    int filled_width = (percentage * bar_width) / 100;
+
+    // Position Y centrée dans la section basse
+    int bar_y = 12;
+
+    // Dessiner la barre (2 pixels de hauteur pour plus de visibilité)
+    for (int x = 0; x < bar_width; x++) {
+        for (int dy = 0; dy < 2; dy++) {  // 2 pixels de hauteur
+            int pixel_x = bar_start_x + x;
+            int pixel_y = bar_y + dy;
+
+            if (pixel_x >= 0 && pixel_x < 32 && pixel_y >= 8 && pixel_y < 16) {
+                if (x < filled_width) {
+                    dmd.writePixel(pixel_x, pixel_y, GRAPHICS_NORMAL, 1); // Rempli
+                } else {
+                    dmd.writePixel(pixel_x, pixel_y, GRAPHICS_NORMAL, 0); // Vide
+                }
+            }
+        }
+    }
+}
+
+// Afficher une erreur d'initialisation
+void display_boot_error(const char* failed_step) {
+    display_boot_step("ERROR", true);
+    display_progress_bar_centered(0); // Barre vide en cas d'erreur
+
+    // Log de l'erreur
+    SERIAL_PRINTF_MINIMAL("Boot ERROR: %s failed\n", failed_step);
+    kernel_log(LOG_LEVEL_ERROR, "Boot initialization failed at: %s", failed_step);
+
+    // Attendre un peu pour que l'utilisateur voie l'erreur
+    vTaskDelay(pdMS_TO_TICKS(2000));
+}
+
+// Mettre à jour le progrès de l'animation
+void update_boot_progress(int current_step, int total_steps, const char* step_name) {
+    display_boot_step(step_name, false);
+    int percentage = (current_step * 100) / total_steps;
+    display_progress_bar_centered(percentage);
+    vTaskDelay(pdMS_TO_TICKS(80)); // Délai pour l'effet visuel
+}
+
 // Fonction d'affichage du logo système style neofetch
 void display_system_logo() {
     Serial.println();
@@ -401,21 +567,28 @@ void display_system_logo() {
                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     
     Serial.println();
-    Serial.printf("       v%s \"IRRIG Distro\"\n", DO_CORE_VERSION);
+    Serial.printf("       v%s \"TSITERA Distro\"\n", DO_CORE_VERSION);
     Serial.println();
 }
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    
+
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Init ===");
     SERIAL_PRINTF_MINIMAL("Ver: %s\n", DO_CORE_VERSION);
-    
+
     // Afficher la mémoire initiale
     SERIAL_PRINTF_MINIMAL("Heap: %lu\n", esp_get_free_heap_size());
-    
+
+    // Initialiser DMD pour l'animation de boot (TRÈS TÔT)
+    dmd_boot_init();
+    display_boot_logo();
+    delay(2000); // Afficher le logo 2 secondes
+    dmd.clearScreen(true); // Effacer pour commencer l'animation
+
     // Initialiser NVS pour la persistance des données
+    update_boot_progress(1, 15, "NVS");
     SERIAL_PRINTLN_MINIMAL("NVS init...");
     esp_err_t nvs_ret = nvs_flash_init();
     if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -425,18 +598,21 @@ void setup() {
     }
     ESP_ERROR_CHECK(nvs_ret);
     SERIAL_PRINTLN_MINIMAL("NVS OK");
-    
+
     // Initialiser seulement les composants essentiels
+    update_boot_progress(2, 15, "Core");
     SERIAL_PRINTLN_MINIMAL("Init components...");
-    
+
     // Gestionnaire de tâches
     SysError_t result = task_manager_init();
     if (result != SYS_OK) {
+        display_boot_error("Task Manager");
         SERIAL_PRINTLN_MINIMAL(MSG_TASK_FAIL);
         return;
     }
 
     // Gestionnaire de mémoire
+    update_boot_progress(3, 15, "Mem");
     SysError_t mem_result = memory_manager_init();
     if (mem_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL(MSG_MEM_FAIL);
@@ -444,6 +620,7 @@ void setup() {
     }
 
     // Initialiser le système de logs
+    update_boot_progress(4, 15, "Logs");
     SysError_t log_result = log_system_init();
     if (log_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL("Log fail");
@@ -451,27 +628,32 @@ void setup() {
     }
 
     // Initialiser le système de monitoring
+    update_boot_progress(5, 15, "Shell");
     SysError_t monitor_result = system_monitor_init();
     if (monitor_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL("Monitor fail");
         return;
     }
-    
+
     // Démarrer le monitoring
     system_monitor_start();
 
     // Initialiser le gestionnaire de WiFi
+    update_boot_progress(6, 15, "WiFi");
     wifi_manager_init(nullptr);
     SERIAL_PRINTLN_MINIMAL("WiFi init");
 
     // Initialiser le gestionnaire NTP
+    update_boot_progress(7, 15, "NTP");
     SysError_t ntp_result = ntp_init();
     if (ntp_result != SYS_OK) {
+        display_boot_error("NTP Manager");
         SERIAL_PRINTLN_MINIMAL(MSG_NTP_FAIL);
         return;
     }
 
     // Initialiser le module HTTP Client
+    update_boot_progress(8, 15, "HTTP");
     SERIAL_PRINTLN_MINIMAL("HTTP Client init...");
     kernel_log(LOG_LEVEL_INFO, "HTTP Client init");
     SysError_t http_result = http_client_module_init();
@@ -483,6 +665,7 @@ void setup() {
     SERIAL_PRINTLN_MINIMAL("HTTP Client OK");
 
     // Initialiser le gestionnaire RTC DS3231
+    update_boot_progress(9, 15, "RTC");
     SERIAL_PRINTLN_MINIMAL("RTC init...");
     SysError_t rtc_result = rtc_manager_init();
     if (rtc_result != SYS_OK) {
@@ -495,6 +678,7 @@ void setup() {
     }
 
     // Initialiser le gestionnaire de synchronisation du temps
+    update_boot_progress(10, 15, "Sync");
     SERIAL_PRINTLN_MINIMAL("Time sync init...");
     SysError_t time_sync_result = time_sync_init();
     if (time_sync_result != SYS_OK) {
@@ -507,6 +691,7 @@ void setup() {
     // Network initialization complete
 
     // Initialiser le gestionnaire d'applications
+    update_boot_progress(11, 15, "Apps");
     SysError_t app_result = app_manager_init();
     if (app_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL(MSG_APP_FAIL);
@@ -514,6 +699,7 @@ void setup() {
     }
 
     // Enregistrer l'application SST
+    update_boot_progress(12, 15, "SST");
     uint8_t sst_app_id;
     SysError_t sst_result = sst_app_register(&sst_app_id);
     if (sst_result == SYS_OK) {
@@ -531,13 +717,14 @@ void setup() {
     SERIAL_PRINTLN_MINIMAL("WiFi STA ready");
     
     // Tenter la connexion automatique si des credentials sont sauvegardés
+    update_boot_progress(13, 15, "WiFi ");
     SERIAL_PRINTLN_MINIMAL("Check saved WiFi...");
     kernel_log(LOG_LEVEL_INFO, "Check WiFi creds");
     if (load_wifi_credentials()) {
         SERIAL_PRINTF_MINIMAL("Found: %s\n", get_stored_ssid());
         kernel_log(LOG_LEVEL_INFO, "Found creds: %s", get_stored_ssid());
         SERIAL_PRINTLN_MINIMAL("Auto connect...");
-        
+
         if (connect_to_wifi(get_stored_ssid(), get_stored_password()) == SYS_OK) {
             SERIAL_PRINTLN_MINIMAL("WiFi OK");
             kernel_log(LOG_LEVEL_INFO, "WiFi auto OK");
@@ -551,22 +738,23 @@ void setup() {
         kernel_log(LOG_LEVEL_INFO, "No saved creds");
         SERIAL_PRINTLN_MINIMAL("Use 'wifi_save' to save");
     }
-    
+
     SERIAL_PRINTF_MINIMAL("Heap after WiFi: %lu\n", esp_get_free_heap_size());
-    
+
     // Synchronisation NTP initiale
+    update_boot_progress(15, 15, "NTP");
     SERIAL_PRINTLN_MINIMAL("NTP sync...");
     kernel_log(LOG_LEVEL_INFO, "NTP sync");
-    
+
     NtpStatus_t sync_status = ntp_sync();
     if (sync_status == NTP_STATUS_SYNCED) {
         SERIAL_PRINTLN_MINIMAL("NTP OK");
         kernel_log(LOG_LEVEL_INFO, "NTP OK");
-        
+
         // Log avec timestamp précis
         time_t current_time = ntp_get_time();
         kernel_log(LOG_LEVEL_INFO, "Start: %s", ntp_format_time(current_time).c_str());
-        
+
         // Vérifier les conditions temporelles
         if (ntp_is_business_hours()) {
             kernel_log(LOG_LEVEL_INFO, "Business mode");
@@ -641,16 +829,23 @@ void setup() {
         kernel_log(LOG_LEVEL_ERROR, MSG_TASK_FAIL);
     }
     
+    // Animation de boot terminée
+    display_progress_bar_centered(100); // Barre complète
+    delay(1500); // Afficher la barre complète pendant 1.5 secondes
+
+    // Nettoyer l'écran DMD pour l'application SST
+    dmd.clearScreen(true);
+
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Ready ===");
     SERIAL_PRINTF_MINIMAL("Tasks: %d\n", task_get_count());
     SERIAL_PRINTF_MINIMAL("Heap: %lu\n", esp_get_free_heap_size());
-    
+
     kernel_log(LOG_LEVEL_INFO, "D'O-Core ready - Tasks: %d", task_get_count());
     kernel_log(LOG_LEVEL_INFO, "Final heap: %lu", esp_get_free_heap_size());
-    
+
     // Afficher le logo système
     display_system_logo();
-    
+
     // Démarrer le shell
     interface_start();
 }

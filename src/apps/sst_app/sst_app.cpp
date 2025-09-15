@@ -5,73 +5,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-// DMD includes
-#include "../../../lib/DMD32-main/DMD32.h"
-#include "../../../lib/DMD32-main/fonts/SystemFont5x7.h"
+// DMD includes pour utiliser l'objet global
+#include "../lib/DMD32-main/DMD32.h"
+#include "../lib/DMD32-main/fonts/SystemFont5x7.h"
 
-// Configuration DMD
-#define DISPLAYS_ACROSS 1
-#define DISPLAYS_DOWN 1
-#define DMD_REFRESH_RATE 300
+// Déclarations externes pour les fonctions DMD globales de main.cpp
+extern DMD dmd;
 
 // Variables globales de l'application SST
 static bool sst_app_initialized = false;
 static bool sst_app_running = false;
 static uint32_t sst_loop_counter = 0;
 
-// Configuration DMD (exactement comme l'exemple)
-#define DISPLAYS_ACROSS 1
-#define DISPLAYS_DOWN 1
-DMD dmd(DISPLAYS_ACROSS, DISPLAYS_DOWN);
-
-// Task dédiée pour le DMD (au lieu d'ISR)
-TaskHandle_t dmd_task_handle = NULL;
-static bool dmd_task_running = false;
-
-// Task de rafraîchissement DMD (au lieu d'ISR)
-void dmd_refresh_task(void* pvParameters) {
-    SERIAL_PRINTLN_MINIMAL("DMD Task: Started");
-    
-    while (dmd_task_running) {
-        // Appeler scanDisplayBySPI depuis la task (pas d'ISR)
-        dmd.scanDisplayBySPI();
-        
-        // Délai pour contrôler la fréquence de rafraîchissement
-        vTaskDelay(pdMS_TO_TICKS(2)); // 1ms = ~1000 FPS max
-    }
-    
-    SERIAL_PRINTLN_MINIMAL("DMD Task: Stopped");
-    vTaskDelete(NULL);
-}
-
-// Initialisation de l'écran DMD (avec task au lieu d'ISR)
-void sst_dmd_init(void) {
-    SERIAL_PRINTLN_MINIMAL("SST App: Initializing DMD display with task...");
-    
-    // clear/init the DMD pixels held in RAM
-    dmd.clearScreen(true);
-    
-    // Créer la task de rafraîchissement DMD
-    dmd_task_running = true;
-    BaseType_t result = xTaskCreatePinnedToCore(
-        dmd_refresh_task,           // Fonction de la task
-        "dmd_refresh_task",         // Nom de la task
-        2048,                       // Taille de la pile
-        NULL,                       // Paramètres
-        6,                          // Priorité (haute pour le rafraîchissement)
-        &dmd_task_handle,           // Handle de la task
-        1                           // Core 1 (même que les autres tasks)
-    );
-    
-    if (result != pdPASS) {
-        SERIAL_PRINTLN_MINIMAL("SST App: Failed to create DMD task");
-        kernel_log(LOG_LEVEL_ERROR, "SST App: Failed to create DMD task");
-        return;
-    }
-    
-    SERIAL_PRINTLN_MINIMAL("SST App: DMD display initialized with task");
-    kernel_log(LOG_LEVEL_INFO, "SST App: DMD display initialized with task");
-}
 
 // Afficher les jours sans accident sur l'écran DMD (SEULEMENT SI LA VALEUR CHANGE)
 void sst_dmd_display_days_without_accident(void) {
@@ -153,13 +98,12 @@ SysError_t sst_app_init(void) {
         SERIAL_PRINTLN_MINIMAL("SST App: Failed to initialize SST data");
         return result;
     }
-    
-    // Initialiser l'écran DMD
-    sst_dmd_init();
-    
+
+    // Note: DMD est maintenant initialisé dans main.cpp pour l'animation de boot
+
     SERIAL_PRINTLN_MINIMAL("SST App: Initialized successfully");
     kernel_log(LOG_LEVEL_INFO, "SST App initialized");
-    
+
     return SYS_OK;
 }
 
@@ -188,22 +132,14 @@ void sst_app_stop(void) {
     SERIAL_PRINTLN_MINIMAL("SST App: Stopping...");
     
     sst_app_running = false;
+// Effacer l'écran
+sst_dmd_clear_screen();
+delay(2000);
 
-    // Effacer l'écran
-    sst_dmd_clear_screen();
-    delay(2000);
-    
-    // Arrêter la task DMD
-    if (dmd_task_handle) {
-        dmd_task_running = false;
-        vTaskDelete(dmd_task_handle);
-        dmd_task_handle = NULL;
-    }
-    
-    
-    
-    SERIAL_PRINTLN_MINIMAL("SST App: Stopped");
-    kernel_log(LOG_LEVEL_INFO, "SST App stopped");
+// Note: La task DMD est maintenant gérée dans main.cpp
+
+SERIAL_PRINTLN_MINIMAL("SST App: Stopped");
+kernel_log(LOG_LEVEL_INFO, "SST App stopped");
 }
 
 // Callback de mise en pause de l'application SST
