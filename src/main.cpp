@@ -820,6 +820,20 @@ void setup() {
     // Nettoyer l'écran DMD pour l'application SST
     dmd.clearScreen(true);
 
+    // Démarrer automatiquement l'application SST après le boot complet
+    if (sst_result == SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("Starting SST App automatically...");
+        kernel_log(LOG_LEVEL_INFO, "Starting SST App automatically after boot");
+        SysError_t start_result = app_start(sst_app_id);
+        if (start_result == SYS_OK) {
+            SERIAL_PRINTLN_MINIMAL("SST App started successfully");
+            kernel_log(LOG_LEVEL_INFO, "SST App started automatically");
+        } else {
+            SERIAL_PRINTLN_MINIMAL("Failed to start SST App");
+            kernel_log(LOG_LEVEL_ERROR, "Failed to start SST App automatically");
+        }
+    }
+
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Ready ===");
     SERIAL_PRINTF_MINIMAL("Tasks: %d\n", task_get_count());
     SERIAL_PRINTF_MINIMAL("Heap: %lu\n", esp_get_free_heap_size());
