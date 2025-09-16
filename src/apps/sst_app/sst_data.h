@@ -90,6 +90,11 @@ SysError_t sst_request_add_accident(bool avec_arret, const char* description);
 SysError_t sst_request_reset(void);
 SysError_t sst_add_accident_memory_only(bool avec_arret, const char* description);
 
+// Fonctions de gestion manuelle des boutons
+SysError_t sst_increment_days_manual(void);
+SysError_t sst_decrement_days_manual(void);
+SysError_t sst_reset_days_manual(void);
+
 // Variables globales
 extern SSTData_t sst_data;
 

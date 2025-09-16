@@ -1,5 +1,6 @@
 #include "sst_app.h"
 #include "sst_data.h"
+#include "sst_buttons.h"
 #include "../../kernel/core/log_system_optimized.h"
 #include "../../kernel/hal/time_sync_manager.h"
 #include "freertos/FreeRTOS.h"
@@ -99,6 +100,14 @@ SysError_t sst_app_init(void) {
         return result;
     }
 
+    // Initialiser les boutons SST
+    result = sst_buttons_init();
+    if (result != SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("SST App: Failed to initialize buttons");
+        kernel_log(LOG_LEVEL_ERROR, "SST App buttons initialization failed");
+        // Continuer sans les boutons
+    }
+
     // Note: DMD est maintenant initialisé dans main.cpp pour l'animation de boot
 
     SERIAL_PRINTLN_MINIMAL("SST App: Initialized successfully");
@@ -132,14 +141,18 @@ void sst_app_stop(void) {
     SERIAL_PRINTLN_MINIMAL("SST App: Stopping...");
     
     sst_app_running = false;
-// Effacer l'écran
-sst_dmd_clear_screen();
-delay(2000);
+    
+    // Désinitialiser les boutons SST
+    sst_buttons_deinit();
+    
+    // Effacer l'écran
+    sst_dmd_clear_screen();
+    delay(2000);
 
-// Note: La task DMD est maintenant gérée dans main.cpp
+    // Note: La task DMD est maintenant gérée dans main.cpp
 
-SERIAL_PRINTLN_MINIMAL("SST App: Stopped");
-kernel_log(LOG_LEVEL_INFO, "SST App stopped");
+    SERIAL_PRINTLN_MINIMAL("SST App: Stopped");
+    kernel_log(LOG_LEVEL_INFO, "SST App stopped");
 }
 
 // Callback de mise en pause de l'application SST
@@ -268,13 +281,16 @@ void sst_app_loop(void) {
         }
     }
     
-    // Afficher les jours sans accident sur l'écran DMD (toutes les 1 seconde)
-    static uint32_t last_display_time = 0;
-    if (current_time - last_display_time >= 1000) { // 1 seconde
-        // Afficher les jours sans accident sur l'écran DMD
+    // // Afficher les jours sans accident sur l'écran DMD (toutes les 1 seconde)
+    // static uint32_t last_display_time = 0;
+    // if (current_time - last_display_time >= 1000) { // 1 seconde
+    //     // Afficher les jours sans accident sur l'écran DMD
         sst_dmd_display_days_without_accident();
-        last_display_time = current_time;
-    }
+    //     last_display_time = current_time;
+    // }
+    
+    // Gérer les boutons SST
+    sst_buttons_loop();
     
     // Petite pause pour éviter de surcharger le CPU
     vTaskDelay(pdMS_TO_TICKS(10));

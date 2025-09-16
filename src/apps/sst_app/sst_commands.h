@@ -13,6 +13,9 @@ SysError_t cmd_sst_statistiques(int argc, char* argv[]);
 SysError_t cmd_sst_reset(int argc, char* argv[]);
 SysError_t cmd_sst_status(int argc, char* argv[]);
 
+// Commande simple pour les boutons SST
+SysError_t cmd_sst_buttons_status(int argc, char* argv[]);
+
 #endif // SST_COMMANDS_H
 
 

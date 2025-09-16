@@ -80,6 +80,9 @@ SysError_t cmd_sst_statistiques(int argc, char* argv[]);
 SysError_t cmd_sst_reset(int argc, char* argv[]);
 SysError_t cmd_sst_status(int argc, char* argv[]);
 
+// Commande SST Buttons
+SysError_t cmd_sst_buttons_status(int argc, char* argv[]);
+
 // Network commands - To be implemented
 
 // Les commandes SST ont été retirées de la version de base

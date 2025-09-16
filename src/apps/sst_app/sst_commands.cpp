@@ -1,5 +1,6 @@
 #include "sst_commands.h"
 #include "sst_data.h"
+#include "sst_buttons.h"
 #include <string.h>
 #include <stdlib.h>
 #include "../../kernel/hal/time_sync_manager.h"
@@ -185,5 +186,23 @@ SysError_t cmd_sst_status(int argc, char* argv[]) {
     Serial.printf("Heure d'incrementation: %u\n", sst_data.heure_incrementation);
     Serial.printf("Heures travaillees par jour: %.2f\n", sst_data.heures_travaillees_par_jour);
     
+    return SYS_OK;
+}
+
+// Commande: sst_buttons_status
+SysError_t cmd_sst_buttons_status(int argc, char* argv[]) {
+    Serial.println("=== SST Buttons Status ===");
+    
+    bool enabled = sst_buttons_is_enabled();
+    Serial.printf("Buttons enabled: %s\n", enabled ? "YES" : "NO");
+    Serial.printf("Increment button: Pin %d\n", SST_BUTTON_INCREMENT_PIN);
+    Serial.printf("Decrement button: Pin %d\n", SST_BUTTON_DECREMENT_PIN);
+    
+    Serial.println("Button functions:");
+    Serial.println("  - Increment button: Click = +1 day, Long press = Reset");
+    Serial.println("  - Decrement button: Click = -1 day, Long press = Accident avec arret");
+    Serial.println("Protection: 2 secondes entre chaque action");
+    
+    Serial.println("=========================");
     return SYS_OK;
 }

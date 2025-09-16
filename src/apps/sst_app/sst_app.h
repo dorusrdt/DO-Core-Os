@@ -4,6 +4,7 @@
 #include "../../kernel/core/kernel.h"
 #include "../../kernel/app/app_manager.h"
 #include "sst_data.h"
+#include "sst_buttons.h"
 
 // Configuration de l'application SST
 #define SST_APP_NAME "SST"

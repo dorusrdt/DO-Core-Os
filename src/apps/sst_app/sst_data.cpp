@@ -523,3 +523,107 @@ bool sst_check_accidents_in_metier_period(void) {
     SERIAL_PRINTLN_MINIMAL("SST Data: No accidents found in metier period");
     return false; // Aucun accident dans la période métier
 }
+
+// Incrémenter manuellement les jours sans accident
+SysError_t sst_increment_days_manual(void) {
+    SERIAL_PRINTLN_MINIMAL("SST Data: Manual increment requested");
+    
+    // Incrémenter les jours sans accident
+    sst_data.jours_sans_accident++;
+    
+    // Incrémenter les heures travaillées
+    sst_data.heures_travaillees += sst_data.heures_travaillees_par_jour;
+    
+    // Mettre à jour le record si nécessaire
+    if (sst_data.jours_sans_accident > sst_data.record_jours_sans_accident) {
+        sst_data.record_jours_sans_accident = sst_data.jours_sans_accident;
+    }
+    
+    // Recalculer le taux de fréquence
+    sst_calculate_taux_frequence();
+    
+    // Mettre à jour la dernière incrémentation
+    sst_data.derniere_incrementation = time(nullptr);
+    
+    // Sauvegarder
+    SysError_t result = sst_data_save();
+    if (result == SYS_OK) {
+        SERIAL_PRINTF_MINIMAL("SST Data: Manual increment successful - Days: %u, Hours: %.2f\n", 
+                             sst_data.jours_sans_accident, sst_data.heures_travaillees);
+        kernel_log(LOG_LEVEL_INFO, "SST manual increment: %u days, %.2f hours", 
+                   sst_data.jours_sans_accident, sst_data.heures_travaillees);
+    } else {
+        SERIAL_PRINTLN_MINIMAL("SST Data: Manual increment failed - Save error");
+        kernel_log(LOG_LEVEL_ERROR, "SST manual increment failed - Save error");
+    }
+    
+    return result;
+}
+
+// Décrémenter manuellement les jours sans accident
+SysError_t sst_decrement_days_manual(void) {
+    SERIAL_PRINTLN_MINIMAL("SST Data: Manual decrement requested");
+    
+    // Vérifier qu'on peut décrémenter
+    if (sst_data.jours_sans_accident == 0) {
+        SERIAL_PRINTLN_MINIMAL("SST Data: Cannot decrement - already at 0");
+        kernel_log(LOG_LEVEL_WARN, "SST manual decrement blocked - already at 0");
+        return SYS_INVALID_PARAM;
+    }
+    
+    // Décrémenter les jours sans accident
+    sst_data.jours_sans_accident--;
+    
+    // Décrémenter les heures travaillées
+    if (sst_data.heures_travaillees >= sst_data.heures_travaillees_par_jour) {
+        sst_data.heures_travaillees -= sst_data.heures_travaillees_par_jour;
+    } else {
+        sst_data.heures_travaillees = 0.0f;
+    }
+    
+    // Recalculer le taux de fréquence
+    sst_calculate_taux_frequence();
+    
+    // Mettre à jour la dernière incrémentation
+    sst_data.derniere_incrementation = time(nullptr);
+    
+    // Sauvegarder
+    SysError_t result = sst_data_save();
+    if (result == SYS_OK) {
+        SERIAL_PRINTF_MINIMAL("SST Data: Manual decrement successful - Days: %u, Hours: %.2f\n", 
+                             sst_data.jours_sans_accident, sst_data.heures_travaillees);
+        kernel_log(LOG_LEVEL_INFO, "SST manual decrement: %u days, %.2f hours", 
+                   sst_data.jours_sans_accident, sst_data.heures_travaillees);
+    } else {
+        SERIAL_PRINTLN_MINIMAL("SST Data: Manual decrement failed - Save error");
+        kernel_log(LOG_LEVEL_ERROR, "SST manual decrement failed - Save error");
+    }
+    
+    return result;
+}
+
+// Réinitialiser manuellement les jours sans accident
+SysError_t sst_reset_days_manual(void) {
+    SERIAL_PRINTLN_MINIMAL("SST Data: Manual reset requested");
+    
+    // Réinitialiser les jours sans accident
+    sst_data.jours_sans_accident = 0;
+    
+    // Recalculer le taux de fréquence
+    sst_calculate_taux_frequence();
+    
+    // Mettre à jour la dernière incrémentation
+    sst_data.derniere_incrementation = time(nullptr);
+    
+    // Sauvegarder
+    SysError_t result = sst_data_save();
+    if (result == SYS_OK) {
+        SERIAL_PRINTF_MINIMAL("SST Data: Manual reset successful - Days: %u\n", sst_data.jours_sans_accident);
+        kernel_log(LOG_LEVEL_INFO, "SST manual reset: %u days", sst_data.jours_sans_accident);
+    } else {
+        SERIAL_PRINTLN_MINIMAL("SST Data: Manual reset failed - Save error");
+        kernel_log(LOG_LEVEL_ERROR, "SST manual reset failed - Save error");
+    }
+    
+    return result;
+}
