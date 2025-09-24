@@ -24,9 +24,21 @@ typedef enum {
     SST_INDICATOR_COUNT   // Nombre total d'indicateurs
 } SSTIndicatorType_t;
 
-// Constantes pour l'affichage en rotation
-#define SST_ROTATION_INTERVAL_MS 5000  // 5 secondes par indicateur
+// Constantes pour l'affichage en rotation basé sur les défilements complets
 #define SST_DISPLAY_MAX_CHARS 8        // Maximum 8 caractères pour la valeur
+#define SST_SCROLL_SPEED_MS 100        // 100ms entre chaque étape de défilement (10 FPS)
+#define SST_SCROLL_START_DELAY_MS 2000 // 2 secondes avant de commencer le défilement
+#define SST_SCROLL_CYCLES_PER_INDICATOR 2  // Nombre de défilements complets par indicateur
+
+// Noms complets des indicateurs pour le défilement
+static const char* SST_INDICATOR_NAMES[SST_INDICATOR_COUNT] = {
+    "Jours Sans Accident",    // SST_INDICATOR_JSA
+    "Total Accidents",        // SST_INDICATOR_TAC
+    "Accidents Avec Arret",   // SST_INDICATOR_AAC
+    "Dernier Accident",       // SST_INDICATOR_DAC
+    "Taux Frequence",         // SST_INDICATOR_TFA
+    "Record Jours"            // SST_INDICATOR_REC
+};
 
 // Variables globales de l'application SST
 static bool sst_app_initialized = false;
@@ -173,24 +185,49 @@ void sst_format_indicator_value(SSTIndicatorType_t indicator, char* value_buffer
     }
 }
 
-// Nouvelle fonction d'affichage en rotation des indicateurs SST
+// Variables pour la gestion du défilement basé sur les cycles complets
+static bool scroll_active = false;
+static uint32_t last_scroll_time = 0;
+static uint32_t indicator_display_start = 0;
+static SSTIndicatorType_t current_scrolling_indicator = SST_INDICATOR_JSA;
+static int scroll_position = 32; // Position X de départ (à droite)
+static int scroll_cycle_count = 0; // Nombre de cycles complets effectués
+static int current_text_width = 0; // Largeur du texte actuel (cache)
+
+// Fonction pour initialiser le défilement d'un indicateur
+void sst_start_indicator_scroll(SSTIndicatorType_t indicator) {
+    const char* indicator_name = SST_INDICATOR_NAMES[indicator];
+    current_text_width = strlen(indicator_name) * 6; // Calculer la largeur une fois
+
+    SERIAL_PRINTF_MINIMAL("SST Display: Starting scroll for '%s' (width: %dpx)\n", indicator_name, current_text_width);
+
+    // Effacer seulement la ligne 9 (où se fait le défilement)
+    dmd.drawFilledBox(0, 9, 31, 9, GRAPHICS_NORMAL); // Effacement optimisé
+
+    // Initialiser le défilement
+    current_scrolling_indicator = indicator;
+    scroll_position = 32; // Commencer à droite de l'écran
+    scroll_active = true;
+    last_scroll_time = millis();
+}
+
+// Nouvelle fonction d'affichage en rotation basé sur les défilements complets
 void sst_dmd_display_rotating_indicators(void) {
     // Variables statiques pour la gestion de la rotation
-    static uint32_t last_rotation_time = 0;
     static SSTIndicatorType_t current_indicator = SST_INDICATOR_JSA;
     static char last_value[SST_DISPLAY_MAX_CHARS] = "";
-    static const char* last_label = "";
 
     uint32_t current_time = millis();
 
-    // Vérifier si on doit changer d'indicateur (toutes les 5 secondes)
-    if (current_time - last_rotation_time >= SST_ROTATION_INTERVAL_MS) {
-        last_rotation_time = current_time;
-
+    // Vérifier si on doit changer d'indicateur (après 2 défilements complets)
+    if (scroll_cycle_count >= SST_SCROLL_CYCLES_PER_INDICATOR) {
         // Passer à l'indicateur suivant
         current_indicator = (SSTIndicatorType_t)((current_indicator + 1) % SST_INDICATOR_COUNT);
+        scroll_cycle_count = 0; // Reset le compteur
+        scroll_active = false; // Reset le défilement
 
-        SERIAL_PRINTF_MINIMAL("SST Display: Rotating to indicator %d\n", current_indicator);
+        SERIAL_PRINTF_MINIMAL("SST Display: Changing to indicator %d after %d complete scrolls\n",
+                             current_indicator, SST_SCROLL_CYCLES_PER_INDICATOR);
     }
 
     // Formater la valeur de l'indicateur actuel
@@ -198,35 +235,63 @@ void sst_dmd_display_rotating_indicators(void) {
     const char* label;
     sst_format_indicator_value(current_indicator, value_buffer, sizeof(value_buffer), &label);
 
-    // N'afficher que si la valeur ou le label a changé (optimisation)
-    if (strcmp(value_buffer, last_value) != 0 || strcmp(label, last_label) != 0) {
-        SERIAL_PRINTF_MINIMAL("SST Display: Updating display - %s: %s\n", label, value_buffer);
+    // Afficher la valeur en haut (statique et centrée) - seulement si elle change
+    if (strcmp(value_buffer, last_value) != 0) {
+        SERIAL_PRINTF_MINIMAL("SST Display: Updating static value - %s: %s\n", label, value_buffer);
 
-        // Effacer l'écran
-        dmd.clearScreen(true);
+        // Effacer seulement la partie haute (lignes 0-7) pour la valeur
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 32; x++) {
+                dmd.writePixel(x, y, GRAPHICS_NORMAL, 0);
+            }
+        }
 
         // Sélectionner la police System5x7
         dmd.selectFont(System5x7);
 
         // Calculer la position pour centrer la valeur en haut (y=0)
-        int value_width = strlen(value_buffer) * 6; // System5x7 = 6 pixels de largeur
+        int value_width = strlen(value_buffer) * 6;
         int value_x_pos = (32 - value_width) / 2;
         if (value_x_pos < 0) value_x_pos = 0;
 
         // Afficher la valeur en haut
         dmd.drawString(value_x_pos, 0, value_buffer, strlen(value_buffer), GRAPHICS_NORMAL);
 
-        // Calculer la position pour centrer le label en bas (y=9)
-        int label_width = strlen(label) * 6; // System5x7 = 6 pixels de largeur
-        int label_x_pos = (32 - label_width) / 2;
-        if (label_x_pos < 0) label_x_pos = 0;
-
-        // Afficher le label en bas
-        dmd.drawString(label_x_pos, 9, label, strlen(label), GRAPHICS_NORMAL);
-
-        // Mémoriser les nouvelles valeurs
+        // Mémoriser la nouvelle valeur
         strcpy(last_value, value_buffer);
-        last_label = label;
+    }
+
+    // Gérer le défilement du nom de l'indicateur
+    // Démarrer le défilement après un délai initial (2 secondes)
+    if (!scroll_active && (current_time - indicator_display_start) >= SST_SCROLL_START_DELAY_MS) {
+        sst_start_indicator_scroll(current_indicator);
+    }
+
+    // Animer le défilement si actif (défilement continu)
+    if (scroll_active) {
+        if (current_time - last_scroll_time >= SST_SCROLL_SPEED_MS) {
+            // Effacer la ligne 9 avant de redessiner
+            dmd.drawFilledBox(0, 9, 31, 9, GRAPHICS_NORMAL);
+
+            // Dessiner le texte à la position actuelle
+            const char* indicator_name = SST_INDICATOR_NAMES[current_scrolling_indicator];
+            dmd.selectFont(System5x7);
+            dmd.drawString(scroll_position, 9, indicator_name, strlen(indicator_name), GRAPHICS_NORMAL);
+
+            // Déplacer la position vers la gauche
+            scroll_position--;
+
+            // Si le texte est complètement sorti à gauche, le ramener à droite et compter un cycle
+            if (scroll_position < -current_text_width) {
+                scroll_position = 32; // Ramener à droite
+                scroll_cycle_count++; // Incrémenter le compteur de cycles
+
+                SERIAL_PRINTF_MINIMAL("SST Display: Scroll cycle %d/%d completed\n",
+                                     scroll_cycle_count, SST_SCROLL_CYCLES_PER_INDICATOR);
+            }
+
+            last_scroll_time = current_time;
+        }
     }
 }
 
@@ -277,6 +342,13 @@ void sst_app_start(void) {
     // Afficher le message de démarrage sur l'écran
     sst_dmd_display_text("SST START");
     delay(2000);
+
+    // Initialiser les variables de défilement
+    scroll_active = false;
+    scroll_position = 32;
+    scroll_cycle_count = 0;
+    indicator_display_start = millis();
+
     // Démarrer l'affichage en rotation des indicateurs
     sst_dmd_display_rotating_indicators();
 
