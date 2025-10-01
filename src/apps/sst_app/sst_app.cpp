@@ -5,6 +5,9 @@
 #include "../../kernel/hal/time_sync_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 // DMD includes pour utiliser l'objet global
 #include "../lib/DMD32-main/DMD32.h"
@@ -44,6 +47,11 @@ static const char* SST_INDICATOR_NAMES[SST_INDICATOR_COUNT] = {
 static bool sst_app_initialized = false;
 static bool sst_app_running = false;
 static uint32_t sst_loop_counter = 0;
+
+// Variables globales pour l'enregistrement automatique du device
+static DeviceInfo_t device_info;
+static bool auto_registration_attempted = false;
+static bool first_registration_success = false; // Flag pour envoi immédiat des métriques après enregistrement
 
 
 // Afficher les jours sans accident sur l'écran DMD (SEULEMENT SI LA VALEUR CHANGE)
@@ -295,6 +303,149 @@ void sst_dmd_display_rotating_indicators(void) {
     }
 }
 
+// Fonction d'enregistrement automatique auprès du backend
+SysError_t sst_device_auto_register(void) {
+    if (auto_registration_attempted) {
+        SERIAL_PRINTLN_MINIMAL("Auto-registration already attempted");
+        return SYS_OK; // Ne pas réessayer
+    }
+
+    if (sst_device_is_registered()) {
+        SERIAL_PRINTLN_MINIMAL("Device already registered - skipping auto-registration");
+        return SYS_OK;
+    }
+
+    auto_registration_attempted = true;
+
+    // Créer la requête JSON pour l'enregistrement automatique
+    DynamicJsonDocument doc(512);
+
+    doc["device_id"] = device_info.device_id;
+    doc["device_name"] = device_info.device_name;
+    doc["mac_address"] = device_info.mac_address;
+    doc["chip_id"] = device_info.chip_id;
+    doc["firmware_version"] = device_info.firmware_version;
+    doc["registration_ip"] = device_info.ip_address;  // Note: backend attend "registration_ip"
+
+    String json_payload;
+    serializeJson(doc, json_payload);
+
+    // Construire l'URL du backend
+    String backend_url = "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) + "/devices/auto-register";
+
+    SERIAL_PRINTLN_MINIMAL("Attempting auto-registration with backend...");
+    kernel_log(LOG_LEVEL_INFO, "Auto-registration attempt to: %s", backend_url.c_str());
+    kernel_log(LOG_LEVEL_INFO, "Payload: %s", json_payload.c_str());
+
+    // Créer le client HTTP
+    HTTPClient http;
+    http.begin(backend_url);
+    http.addHeader("Content-Type", "application/json");
+    http.setTimeout(REGISTRATION_TIMEOUT_MS);
+
+    // Envoyer la requête POST
+    int httpResponseCode = http.POST(json_payload);
+
+    String response;
+    if (httpResponseCode > 0) {
+        response = http.getString();
+        SERIAL_PRINTF_MINIMAL("HTTP Response code: %d\n", httpResponseCode);
+        kernel_log(LOG_LEVEL_INFO, "Backend response code: %d", httpResponseCode);
+
+        // Analyser la réponse
+        DynamicJsonDocument response_doc(1024);
+        DeserializationError error = deserializeJson(response_doc, response);
+
+        if (!error && response_doc["success"] == true) {
+            // Enregistrement réussi
+            String api_token = response_doc["device"]["api_token"] | "default_token";
+            sst_device_set_registered(api_token.c_str());
+
+            SERIAL_PRINTLN_MINIMAL("Auto-registration successful");
+            kernel_log(LOG_LEVEL_INFO, "Device auto-registered successfully with token: %s", api_token.c_str());
+
+            http.end();
+            return SYS_OK;
+        } else {
+            // Erreur d'enregistrement
+            SERIAL_PRINTLN_MINIMAL("Auto-registration failed - invalid response");
+            kernel_log(LOG_LEVEL_ERROR, "Auto-registration failed: %s", response.c_str());
+
+            http.end();
+            return SYS_ERROR;
+        }
+    } else {
+        // Erreur HTTP
+        SERIAL_PRINTF_MINIMAL("HTTP Error: %d\n", httpResponseCode);
+        kernel_log(LOG_LEVEL_ERROR, "HTTP request failed: %d", httpResponseCode);
+
+        http.end();
+        return SYS_ERROR;
+    }
+}
+
+
+// Initialisation du système d'enregistrement automatique du device
+SysError_t sst_device_auto_registration_init(void) {
+    SERIAL_PRINTLN_MINIMAL("Device auto-registration: Initializing...");
+
+    // Générer l'ID unique du device
+    device_info.mac_address = WiFi.macAddress();
+    device_info.chip_id = (uint32_t)ESP.getEfuseMac();
+    device_info.device_id = device_info.mac_address + "_" + String(device_info.chip_id, HEX);
+    device_info.device_name = "SST-Device-" + String(device_info.chip_id, HEX).substring(0, 6);
+    device_info.firmware_version = DO_CORE_VERSION;
+    device_info.ip_address = WiFi.localIP().toString();
+    device_info.state = DEVICE_STATE_UNREGISTERED;
+    device_info.registration_time = 0;
+    device_info.last_sync_time = 0;
+    auto_registration_attempted = false;
+
+    // Essayer de charger les informations sauvegardées depuis NVS
+    // TODO: Implémenter la persistance NVS pour l'état d'enregistrement
+
+    SERIAL_PRINTLN_MINIMAL("Device auto-registration: Initialized");
+    kernel_log(LOG_LEVEL_INFO, "Device auto-registration initialized - ID: %s", device_info.device_id.c_str());
+
+    return SYS_OK;
+}
+
+
+// Obtenir l'état d'enregistrement du device
+DeviceRegistrationState_t sst_device_get_registration_state(void) {
+    return device_info.state;
+}
+
+// Marquer le device comme enregistré avec un token API
+SysError_t sst_device_set_registered(const char* api_token) {
+    if (!api_token) {
+        return SYS_INVALID_PARAM;
+    }
+
+    device_info.api_token = String(api_token);
+    device_info.state = DEVICE_STATE_REGISTERED;
+    device_info.registration_time = time(nullptr);
+
+    // TODO: Sauvegarder en persistance (NVS)
+
+    SERIAL_PRINTLN_MINIMAL("Device marked as registered");
+    kernel_log(LOG_LEVEL_INFO, "Device registered with token");
+
+    // Device enregistré avec succès
+
+    return SYS_OK;
+}
+
+// Vérifier si le device est enregistré
+bool sst_device_is_registered(void) {
+    return (device_info.state == DEVICE_STATE_REGISTERED && device_info.api_token.length() > 0);
+}
+
+// Obtenir les informations du device
+const DeviceInfo_t* sst_device_get_info(void) {
+    return &device_info;
+}
+
 // Callback d'initialisation de l'application SST
 SysError_t sst_app_init(void) {
     SERIAL_PRINTLN_MINIMAL("SST App: Initializing...");
@@ -319,6 +470,14 @@ SysError_t sst_app_init(void) {
         // Continuer sans les boutons
     }
 
+    // Initialiser le système d'enregistrement automatique du device
+    result = sst_device_auto_registration_init();
+    if (result != SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("SST App: Failed to initialize device auto-registration");
+        kernel_log(LOG_LEVEL_ERROR, "SST App device auto-registration initialization failed");
+        // Continuer sans enregistrement automatique (mode dégradé)
+    }
+
     // Note: DMD est maintenant initialisé dans main.cpp pour l'animation de boot
 
     SERIAL_PRINTLN_MINIMAL("SST App: Initialized successfully");
@@ -338,6 +497,20 @@ void sst_app_start(void) {
     SERIAL_PRINTLN_MINIMAL("=== SST Application ===");
     SERIAL_PRINTLN_MINIMAL("SST App with P10 Display started!");
     SERIAL_PRINTLN_MINIMAL("======================");
+
+    // Tenter l'enregistrement automatique si le device n'est pas enregistré
+    if (!sst_device_is_registered()) {
+        SERIAL_PRINTLN_MINIMAL("Device not registered - attempting auto-registration");
+        SysError_t reg_result = sst_device_auto_register();
+        if (reg_result == SYS_OK) {
+            SERIAL_PRINTLN_MINIMAL("Auto-registration successful");
+            first_registration_success = true; // Marquer pour envoi immédiat des métriques
+        } else {
+            SERIAL_PRINTLN_MINIMAL("Auto-registration failed - will retry later");
+        }
+    } else {
+        SERIAL_PRINTLN_MINIMAL("Device already registered - skipping auto-registration");
+    }
 
     // Afficher le message de démarrage sur l'écran
     sst_dmd_display_text("SST START");
@@ -360,6 +533,9 @@ void sst_app_stop(void) {
     SERIAL_PRINTLN_MINIMAL("SST App: Stopping...");
 
     sst_app_running = false;
+
+    // Reset auto-registration flag pour permettre une nouvelle tentative au redémarrage
+    auto_registration_attempted = false;
 
     // Désinitialiser les boutons SST
     sst_buttons_deinit();
@@ -505,6 +681,96 @@ void sst_app_loop(void) {
 
     // Gérer les boutons SST
     sst_buttons_loop();
+
+    // Tenter périodiquement l'enregistrement automatique si pas encore enregistré
+    static uint32_t last_registration_attempt = 0;
+    uint32_t current_time_reg = millis();
+
+    if (!sst_device_is_registered() && !auto_registration_attempted &&
+        (current_time_reg - last_registration_attempt) > 60000) { // Toutes les minutes
+        SERIAL_PRINTLN_MINIMAL("SST Loop: Retrying auto-registration...");
+        SysError_t reg_result = sst_device_auto_register();
+        last_registration_attempt = current_time_reg;
+
+        if (reg_result == SYS_OK) {
+            SERIAL_PRINTLN_MINIMAL("SST Loop: Auto-registration successful on retry");
+        }
+    }
+
+    // ============================================================================
+    // ENVOI PÉRIODIQUE DES MÉTRIQUES SYSTÈME
+    // ============================================================================
+
+    // Variables statiques pour l'envoi des métriques
+    static uint32_t last_metrics_send = 0;
+    const uint32_t METRICS_SEND_INTERVAL_MS = 300000; // 5 minutes
+
+    uint32_t current_time_metrics = millis();
+
+    // Envoyer les métriques immédiatement après le premier enregistrement OU toutes les 5 minutes
+    bool should_send_metrics = false;
+
+    if (first_registration_success) {
+        // Envoi immédiat après enregistrement réussi
+        should_send_metrics = true;
+        first_registration_success = false; // Reset le flag
+        SERIAL_PRINTLN_MINIMAL("SST Loop: Sending initial system metrics after registration...");
+    } else if (current_time_metrics - last_metrics_send >= METRICS_SEND_INTERVAL_MS) {
+        // Envoi périodique toutes les 5 minutes
+        should_send_metrics = true;
+        last_metrics_send = current_time_metrics;
+        SERIAL_PRINTLN_MINIMAL("SST Loop: Sending periodic system metrics to backend...");
+    }
+
+    if (should_send_metrics && sst_device_is_registered()) {
+        // Collecter les métriques système
+        DynamicJsonDocument metrics(256);
+
+        // Métriques CPU
+        metrics["cpu_freq_mhz"] = ESP.getCpuFreqMHz();
+
+        // Métriques mémoire
+        metrics["free_heap_bytes"] = ESP.getFreeHeap();
+        metrics["total_heap_bytes"] = 327680; // ESP32 heap size constant
+
+        // Métrique uptime
+        metrics["uptime_seconds"] = millis() / 1000;
+
+        // Métrique WiFi
+        metrics["wifi_rssi"] = WiFi.RSSI();
+
+        // Métrique température (si disponible, sinon null)
+        // metrics["temperature_celsius"] = readTemperatureSensor(); // TODO: Implémenter si capteur présent
+
+        String json_payload;
+        serializeJson(metrics, json_payload);
+
+        // Construire l'URL du backend
+        String backend_url = "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) +
+                           "/devices/" + device_info.device_id + "/metrics";
+
+        // Créer le client HTTP
+        HTTPClient http;
+        http.begin(backend_url);
+        http.addHeader("Content-Type", "application/json");
+        http.addHeader("Authorization", "Bearer " + device_info.api_token);
+        http.setTimeout(10000); // 10 secondes timeout
+
+        // Envoyer la requête POST
+        int httpResponseCode = http.POST(json_payload);
+
+        if (httpResponseCode == 200) {
+            SERIAL_PRINTLN_MINIMAL("SST Loop: System metrics sent successfully");
+            kernel_log(LOG_LEVEL_INFO, "System metrics sent to backend");
+        } else {
+            SERIAL_PRINTF_MINIMAL("SST Loop: Failed to send metrics (HTTP %d)\n", httpResponseCode);
+            kernel_log(LOG_LEVEL_WARN, "Failed to send system metrics: HTTP %d", httpResponseCode);
+        }
+
+        http.end();
+    } else if (!sst_device_is_registered()) {
+        SERIAL_PRINTLN_MINIMAL("SST Loop: Device not registered - skipping metrics send");
+    }
 
     // Petite pause pour éviter de surcharger le CPU
     vTaskDelay(pdMS_TO_TICKS(10));
