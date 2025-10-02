@@ -703,7 +703,7 @@ void sst_app_loop(void) {
 
     // Variables statiques pour l'envoi des métriques
     static uint32_t last_metrics_send = 0;
-    const uint32_t METRICS_SEND_INTERVAL_MS = 300000; // 5 minutes
+    const uint32_t METRICS_SEND_INTERVAL_MS = 10000; // 10 secondes
 
     uint32_t current_time_metrics = millis();
 
@@ -716,7 +716,7 @@ void sst_app_loop(void) {
         first_registration_success = false; // Reset le flag
         SERIAL_PRINTLN_MINIMAL("SST Loop: Sending initial system metrics after registration...");
     } else if (current_time_metrics - last_metrics_send >= METRICS_SEND_INTERVAL_MS) {
-        // Envoi périodique toutes les 5 minutes
+        // Envoi périodique toutes les 10 secondes
         should_send_metrics = true;
         last_metrics_send = current_time_metrics;
         SERIAL_PRINTLN_MINIMAL("SST Loop: Sending periodic system metrics to backend...");
