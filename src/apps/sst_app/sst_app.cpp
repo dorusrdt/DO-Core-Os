@@ -331,7 +331,7 @@ SysError_t sst_device_auto_register(void) {
     serializeJson(doc, json_payload);
 
     // Construire l'URL du backend
-    String backend_url = "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) + "/devices/auto-register";
+    String backend_url = "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) + "/devices/registration";
 
     SERIAL_PRINTLN_MINIMAL("Attempting auto-registration with backend...");
     kernel_log(LOG_LEVEL_INFO, "Auto-registration attempt to: %s", backend_url.c_str());
