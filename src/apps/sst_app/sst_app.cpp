@@ -8,6 +8,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <math.h>
 
 // DMD includes pour utiliser l'objet global
 #include "../lib/DMD32-main/DMD32.h"
@@ -15,6 +16,9 @@
 
 // Déclarations externes pour les fonctions DMD globales de main.cpp
 extern DMD dmd;
+
+// Forward declaration
+SysError_t sst_fetch_config_from_backend(void);
 
 // Énumération des indicateurs SST pour l'affichage en rotation
 typedef enum {
@@ -526,6 +530,11 @@ void sst_app_start(void) {
     sst_dmd_display_rotating_indicators();
 
     kernel_log(LOG_LEVEL_INFO, "SST App started with P10 display");
+
+    // Récupérer la configuration depuis le backend au démarrage (si enregistré)
+    if (sst_device_is_registered()) {
+        sst_fetch_config_from_backend();
+    }
 }
 
 // Callback d'arrêt de l'application SST
@@ -778,6 +787,110 @@ void sst_app_loop(void) {
 
     // Petite pause pour éviter de surcharger le CPU
     vTaskDelay(pdMS_TO_TICKS(10));
+
+    // =========================================================================
+    // RÉCUPÉRATION PÉRIODIQUE DE LA CONFIGURATION DEPUIS LE BACKEND
+    // =========================================================================
+    static uint32_t last_config_fetch = 0;
+    const uint32_t CONFIG_FETCH_INTERVAL_MS = 30000; // 3 minutes
+    uint32_t now_ms = millis();
+    if (sst_device_is_registered() && (now_ms - last_config_fetch >= CONFIG_FETCH_INTERVAL_MS)) {
+        sst_fetch_config_from_backend();
+        last_config_fetch = now_ms;
+    }
+}
+
+// Récupérer la configuration depuis le backend et l'appliquer localement si différente
+SysError_t sst_fetch_config_from_backend(void) {
+    if (!sst_device_is_registered()) {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Device not registered - skip fetch");
+        return SYS_ERROR;
+    }
+
+    // Construire l'URL du backend
+    String backend_url = "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) +
+                         "/devices/" + device_info.device_id + "/config";
+
+    HTTPClient http;
+    http.begin(backend_url);
+    http.addHeader("Authorization", "Bearer " + device_info.api_token);
+    http.setTimeout(10000);
+
+    int httpCode = http.GET();
+    if (httpCode != 200) {
+        SERIAL_PRINTF_MINIMAL("SST Config: Fetch failed (HTTP %d)\n", httpCode);
+        http.end();
+        return SYS_ERROR;
+    }
+
+    String payload = http.getString();
+    http.end();
+
+    DynamicJsonDocument doc(512);
+    DeserializationError err = deserializeJson(doc, payload);
+    if (err) {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Failed to parse config JSON");
+        return SYS_ERROR;
+    }
+
+    // Lire les valeurs
+    int fetched_heure_inc = doc["heure_incrementation"] | -1;
+    float fetched_heures_jour = doc["heures_travaillees_par_jour"] | -1.0f;
+
+    bool valid = true;
+    if (fetched_heure_inc < 0 || fetched_heure_inc > 2359 || (fetched_heure_inc % 100) > 59) {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Invalid heure_incrementation from server");
+        valid = false;
+    }
+    if (fetched_heures_jour < 0.0f || fetched_heures_jour > 24.0f) {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Invalid heures_travaillees_par_jour from server");
+        valid = false;
+    }
+    if (!valid) {
+        return SYS_ERROR;
+    }
+
+    bool changed = false;
+    if ((int)sst_data.heure_incrementation != fetched_heure_inc) {
+        SERIAL_PRINTF_MINIMAL("SST Config: heure_incrementation %u -> %d (server)\n", sst_data.heure_incrementation, fetched_heure_inc);
+        sst_data.heure_incrementation = (uint32_t)fetched_heure_inc;
+        changed = true;
+    }
+    if (fabsf(sst_data.heures_travaillees_par_jour - fetched_heures_jour) > 0.0001f) {
+        SERIAL_PRINTF_MINIMAL("SST Config: heures_travaillees_par_jour %.2f -> %.2f (server)\n", sst_data.heures_travaillees_par_jour, fetched_heures_jour);
+        sst_data.heures_travaillees_par_jour = fetched_heures_jour;
+        changed = true;
+    }
+
+    if (!changed) {
+        return SYS_OK;
+    }
+
+    // Recalculer la prochaine incrementation basée sur l'heure cible (aujourd'hui ou demain)
+    time_t current_time = time_sync_get_current_time();
+    if (current_time > 0) {
+        struct tm* tm_info = localtime(&current_time);
+        uint32_t target_hour = sst_data.heure_incrementation / 100;
+        uint32_t target_min = sst_data.heure_incrementation % 100;
+        tm_info->tm_hour = target_hour;
+        tm_info->tm_min = target_min;
+        tm_info->tm_sec = 0;
+        time_t next_time = mktime(tm_info);
+        if (next_time <= current_time) {
+            next_time += 86400;
+        }
+        sst_data.derniere_incrementation = next_time;
+    }
+
+    // Persister
+    SysError_t save_res = sst_data_save();
+    if (save_res == SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Applied and saved server config");
+    } else {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Failed to save server config");
+    }
+
+    return save_res;
 }
 
 // Fonction pour envoyer les mises à jour de configuration au backend
