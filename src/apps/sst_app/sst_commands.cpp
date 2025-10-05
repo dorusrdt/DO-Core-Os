@@ -1,6 +1,7 @@
 #include "sst_commands.h"
 #include "sst_data.h"
 #include "sst_buttons.h"
+#include "sst_app.h"
 #include <string.h>
 #include <stdlib.h>
 #include "../../kernel/hal/time_sync_manager.h"
@@ -11,9 +12,9 @@ SysError_t cmd_sst_accident_avec_arret(int argc, char* argv[]) {
         Serial.println("Usage: sst_accident_avec_arret [description]");
         return SYS_INVALID_PARAM;
     }
-    
+
     const char* description = (argc > 1) ? argv[1] : "Accident avec arret";
-    
+
     // Utiliser la fonction directe (AVEC PERSISTANCE)
     SysError_t result = sst_add_accident(true, description);
     if (result == SYS_OK) {
@@ -21,7 +22,7 @@ SysError_t cmd_sst_accident_avec_arret(int argc, char* argv[]) {
     } else {
         Serial.println("Erreur lors de l'ajout de l'accident");
     }
-    
+
     return result;
 }
 
@@ -31,9 +32,9 @@ SysError_t cmd_sst_accident_sans_arret(int argc, char* argv[]) {
         Serial.println("Usage: sst_accident_sans_arret [description]");
         return SYS_INVALID_PARAM;
     }
-    
+
     const char* description = (argc > 1) ? argv[1] : "Accident sans arret";
-    
+
     // Utiliser la fonction directe (AVEC PERSISTANCE)
     SysError_t result = sst_add_accident(false, description);
     if (result == SYS_OK) {
@@ -41,7 +42,7 @@ SysError_t cmd_sst_accident_sans_arret(int argc, char* argv[]) {
     } else {
         Serial.println("Erreur lors de l'ajout de l'accident");
     }
-    
+
     return result;
 }
 
@@ -52,20 +53,20 @@ SysError_t cmd_sst_config_heures(int argc, char* argv[]) {
         Serial.println("Exemple: sst_config_heures 8 30");
         return SYS_INVALID_PARAM;
     }
-    
+
     uint32_t heure = strtoul(argv[1], NULL, 10);
     uint32_t minute = strtoul(argv[2], NULL, 10);
-    
+
     if (heure > 23) {
         Serial.println("Erreur: L'heure doit etre entre 0 et 23");
         return SYS_INVALID_PARAM;
     }
-    
+
     if (minute > 59) {
         Serial.println("Erreur: La minute doit etre entre 0 et 59");
         return SYS_INVALID_PARAM;
     }
-    
+
     // Calculer le timestamp pour aujourd'hui à l'heure spécifiée
     time_t current_time = time_sync_get_current_time();
     if (current_time == 0) {
@@ -73,33 +74,41 @@ SysError_t cmd_sst_config_heures(int argc, char* argv[]) {
         return SYS_ERROR;
     }
     struct tm* tm_info = localtime(&current_time);
-    
+
     // Définir l'heure et la minute
     tm_info->tm_hour = heure;
     tm_info->tm_min = minute;
     tm_info->tm_sec = 0;
-    
+
     time_t increment_time = mktime(tm_info);
-    
+
     // Si l'heure est déjà passée aujourd'hui, programmer pour demain
     if (increment_time <= current_time) {
         increment_time += 86400; // +1 jour
     }
-    
+
     sst_data.derniere_incrementation = increment_time;
-    
+
     // Stocker l'heure d'incrémentation (format HHMM)
     sst_data.heure_incrementation = heure * 100 + minute;
-    
+
     // Sauvegarder la configuration
     SysError_t result = sst_data_save();
     if (result == SYS_OK) {
         Serial.printf("Incrementation programmee: %02u:%02u\n", heure, minute);
         Serial.printf("Prochaine incrementation: %s", ctime(&increment_time));
+
+        // Envoyer la mise à jour de configuration au backend
+        SysError_t config_result = sst_send_config_update();
+        if (config_result == SYS_OK) {
+            Serial.println("Configuration envoyee au backend avec succes");
+        } else {
+            Serial.println("Erreur lors de l'envoi de la configuration au backend");
+        }
     } else {
         Serial.println("Erreur lors de la sauvegarde");
     }
-    
+
     return result;
 }
 
@@ -110,24 +119,32 @@ SysError_t cmd_sst_config_heures_travail(int argc, char* argv[]) {
         Serial.println("Exemple: sst_config_heures_travail 8.5");
         return SYS_INVALID_PARAM;
     }
-    
+
     float heures = atof(argv[1]);
-    
+
     if (heures <= 0 || heures > 24) {
         Serial.println("Erreur: Les heures doivent etre entre 0 et 24");
         return SYS_INVALID_PARAM;
     }
-    
+
     sst_data.heures_travaillees_par_jour = heures;
-    
+
     // Sauvegarder la configuration
     SysError_t result = sst_data_save();
     if (result == SYS_OK) {
         Serial.printf("Heures travaillees par jour configurees: %.2f heures\n", heures);
+
+        // Envoyer la mise à jour de configuration au backend
+        SysError_t config_result = sst_send_config_update();
+        if (config_result == SYS_OK) {
+            Serial.println("Configuration envoyee au backend avec succes");
+        } else {
+            Serial.println("Erreur lors de l'envoi de la configuration au backend");
+        }
     } else {
         Serial.println("Erreur lors de la sauvegarde");
     }
-    
+
     return result;
 }
 
@@ -135,13 +152,13 @@ SysError_t cmd_sst_config_heures_travail(int argc, char* argv[]) {
 SysError_t cmd_sst_liste_accidents(int argc, char* argv[]) {
     char buffer[2048];
     SysError_t result = sst_get_accidents_list(buffer, sizeof(buffer));
-    
+
     if (result == SYS_OK) {
         Serial.println(buffer);
     } else {
         Serial.println("Erreur lors de la recuperation de la liste des accidents");
     }
-    
+
     return result;
 }
 
@@ -149,20 +166,20 @@ SysError_t cmd_sst_liste_accidents(int argc, char* argv[]) {
 SysError_t cmd_sst_statistiques(int argc, char* argv[]) {
     char buffer[1024];
     SysError_t result = sst_get_statistics(buffer, sizeof(buffer));
-    
+
     if (result == SYS_OK) {
         Serial.println(buffer);
     } else {
         Serial.println("Erreur lors de la recuperation des statistiques");
     }
-    
+
     return result;
 }
 
 // Commande: sst_reset (SANS CONFIRMATION)
 SysError_t cmd_sst_reset(int argc, char* argv[]) {
     Serial.println("Reinitialisation des donnees SST...");
-    
+
     // Utiliser la fonction directe (AVEC PERSISTANCE)
     SysError_t result = sst_data_reset();
     if (result == SYS_OK) {
@@ -170,7 +187,7 @@ SysError_t cmd_sst_reset(int argc, char* argv[]) {
     } else {
         Serial.println("Erreur lors de la reinitialisation");
     }
-    
+
     return result;
 }
 
@@ -185,24 +202,24 @@ SysError_t cmd_sst_status(int argc, char* argv[]) {
     Serial.printf("Taux de frequence: %.2f\n", sst_data.taux_frequence);
     Serial.printf("Heure d'incrementation: %u\n", sst_data.heure_incrementation);
     Serial.printf("Heures travaillees par jour: %.2f\n", sst_data.heures_travaillees_par_jour);
-    
+
     return SYS_OK;
 }
 
 // Commande: sst_buttons_status
 SysError_t cmd_sst_buttons_status(int argc, char* argv[]) {
     Serial.println("=== SST Buttons Status ===");
-    
+
     bool enabled = sst_buttons_is_enabled();
     Serial.printf("Buttons enabled: %s\n", enabled ? "YES" : "NO");
     Serial.printf("Increment button: Pin %d\n", SST_BUTTON_INCREMENT_PIN);
     Serial.printf("Decrement button: Pin %d\n", SST_BUTTON_DECREMENT_PIN);
-    
+
     Serial.println("Button functions:");
     Serial.println("  - Increment button: Click = +1 day, Long press = Reset");
     Serial.println("  - Decrement button: Click = -1 day, Long press = Accident avec arret");
     Serial.println("Protection: 2 secondes entre chaque action");
-    
+
     Serial.println("=========================");
     return SYS_OK;
 }

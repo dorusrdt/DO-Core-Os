@@ -13,7 +13,7 @@
 #define SST_APP_DESCRIPTION "SST Application - Hello World"
 
 // Configuration de l'enregistrement automatique
-#define BACKEND_HOST "192.168.1.218"
+#define BACKEND_HOST "192.168.1.3"
 #define BACKEND_PORT 5000
 #define REGISTRATION_TIMEOUT_MS 30000  // 30 secondes timeout pour la requête
 
@@ -63,5 +63,8 @@ const DeviceInfo_t* sst_device_get_info(void);
 extern void sst_dmd_display_days_without_accident(void);
 extern void sst_dmd_display_text(const char* text);
 extern void sst_dmd_clear_screen(void);
+
+// Fonction d'envoi de configuration au backend
+SysError_t sst_send_config_update(void);
 
 #endif // SST_APP_H

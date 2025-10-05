@@ -772,8 +772,63 @@ void sst_app_loop(void) {
         SERIAL_PRINTLN_MINIMAL("SST Loop: Device not registered - skipping metrics send");
     }
 
+    // ============================================================================
+    // FONCTION POUR ENVOYER LES MISES À JOUR DE CONFIGURATION
+    // ============================================================================
+
     // Petite pause pour éviter de surcharger le CPU
     vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+// Fonction pour envoyer les mises à jour de configuration au backend
+SysError_t sst_send_config_update(void) {
+    if (!sst_device_is_registered()) {
+        SERIAL_PRINTLN_MINIMAL("SST Config: Device not registered - skipping config update");
+        return SYS_ERROR;
+    }
+
+    // Créer le payload JSON avec la configuration actuelle
+    DynamicJsonDocument config_doc(256);
+
+    config_doc["heure_incrementation"] = sst_data.heure_incrementation;
+    config_doc["heures_travaillees_par_jour"] = sst_data.heures_travaillees_par_jour;
+
+    String json_payload;
+    serializeJson(config_doc, json_payload);
+
+    // Construire l'URL du backend
+    String backend_url = "http://" + String(BACKEND_HOST) + ":" + String(BACKEND_PORT) +
+                        "/devices/" + device_info.device_id + "/config";
+
+    SERIAL_PRINTLN_MINIMAL("SST Config: Sending configuration update to backend...");
+    kernel_log(LOG_LEVEL_INFO, "Sending config update to: %s", backend_url.c_str());
+    kernel_log(LOG_LEVEL_INFO, "Config payload: %s", json_payload.c_str());
+
+    // Créer le client HTTP
+    HTTPClient http;
+    http.begin(backend_url);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Authorization", "Bearer " + device_info.api_token);
+    http.setTimeout(10000); // 10 secondes timeout
+
+    // Envoyer la requête POST
+    int httpResponseCode = http.POST(json_payload);
+
+    String response;
+    if (httpResponseCode == 200) {
+        response = http.getString();
+        SERIAL_PRINTLN_MINIMAL("SST Config: Configuration update sent successfully");
+        kernel_log(LOG_LEVEL_INFO, "Configuration update sent to backend");
+
+        http.end();
+        return SYS_OK;
+    } else {
+        SERIAL_PRINTF_MINIMAL("SST Config: Failed to send config update (HTTP %d)\n", httpResponseCode);
+        kernel_log(LOG_LEVEL_WARN, "Failed to send config update: HTTP %d", httpResponseCode);
+
+        http.end();
+        return SYS_ERROR;
+    }
 }
 
 // Structure des callbacks pour l'application SST
