@@ -1,6 +1,7 @@
 #include "sst_app.h"
 #include "sst_data.h"
 #include "sst_buttons.h"
+#include "sst_sync.h"
 #include "../../kernel/core/log_system_optimized.h"
 #include "../../kernel/hal/time_sync_manager.h"
 #include "freertos/FreeRTOS.h"
@@ -792,11 +793,22 @@ void sst_app_loop(void) {
     // RÉCUPÉRATION PÉRIODIQUE DE LA CONFIGURATION DEPUIS LE BACKEND
     // =========================================================================
     static uint32_t last_config_fetch = 0;
-    const uint32_t CONFIG_FETCH_INTERVAL_MS = 30000; // 3 minutes
+    const uint32_t CONFIG_FETCH_INTERVAL_MS = 30000; // 30 secondes
     uint32_t now_ms = millis();
     if (sst_device_is_registered() && (now_ms - last_config_fetch >= CONFIG_FETCH_INTERVAL_MS)) {
         sst_fetch_config_from_backend();
         last_config_fetch = now_ms;
+    }
+
+    // =========================================================================
+    // SYNCHRONISATION PÉRIODIQUE DES INDICATEURS SST AVEC LE BACKEND
+    // =========================================================================
+    static uint32_t last_sync_check = 0;
+    const uint32_t SYNC_INTERVAL_MS = 30000; // 30 secondes
+    if (sst_device_is_registered() && (now_ms - last_sync_check >= SYNC_INTERVAL_MS)) {
+        SERIAL_PRINTLN_MINIMAL("SST Loop: Starting indicators sync with backend");
+        sst_sync_with_backend();
+        last_sync_check = now_ms;
     }
 }
 
