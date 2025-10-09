@@ -18,6 +18,7 @@
 #include "kernel/core/minimal_config.h"
 #include "kernel/hal/rtc_manager.h"
 #include "kernel/hal/time_sync_manager.h"
+#include "apps/irrig_app_master/irrig_app_master.h"
 #include <time.h>
 
 // Variables globales du système
@@ -43,29 +44,29 @@ SysError_t save_wifi_credentials(const char* ssid, const char* password) {
         kernel_log(LOG_LEVEL_ERROR, "Invalid credentials: null pointer");
         return SYS_INVALID_PARAM;
     }
-    
+
     if (strlen(ssid) == 0 || strlen(ssid) > 31) {
         kernel_log(LOG_LEVEL_ERROR, "Invalid SSID length: %d (must be 1-31)", strlen(ssid));
         return SYS_INVALID_PARAM;
     }
-    
+
     if (strlen(password) < 8 || strlen(password) > 63) {
         kernel_log(LOG_LEVEL_ERROR, "Invalid password length: %d (must be 8-63)", strlen(password));
         return SYS_INVALID_PARAM;
     }
-    
+
     // Sauvegarder en mémoire RAM
     strncpy(stored_credentials.ssid, ssid, sizeof(stored_credentials.ssid) - 1);
     strncpy(stored_credentials.password, password, sizeof(stored_credentials.password) - 1);
     stored_credentials.valid = true;
-    
+
     // Sauvegarder en mémoire flash (persistant)
     wifi_prefs.begin("wifi", false);
     bool flash_ok = wifi_prefs.putString("ssid", ssid) > 0 &&
                    wifi_prefs.putString("password", password) > 0 &&
                    wifi_prefs.putBool("valid", true);
     wifi_prefs.end();
-    
+
     if (flash_ok) {
         kernel_log(LOG_LEVEL_INFO, "WiFi credentials saved to flash: SSID=%s", stored_credentials.ssid);
         return SYS_OK;
@@ -79,11 +80,11 @@ bool load_wifi_credentials() {
     // Charger depuis la mémoire flash
     wifi_prefs.begin("wifi", true);
     bool valid = wifi_prefs.getBool("valid", false);
-    
+
     if (valid) {
         String ssid = wifi_prefs.getString("ssid", "");
         String password = wifi_prefs.getString("password", "");
-        
+
         if (ssid.length() > 0 && password.length() > 0) {
             strncpy(stored_credentials.ssid, ssid.c_str(), sizeof(stored_credentials.ssid) - 1);
             strncpy(stored_credentials.password, password.c_str(), sizeof(stored_credentials.password) - 1);
@@ -93,7 +94,7 @@ bool load_wifi_credentials() {
             valid = false;
         }
     }
-    
+
     wifi_prefs.end();
     return valid;
 }
@@ -110,12 +111,12 @@ void clear_wifi_credentials() {
     // Effacer de la mémoire RAM
     memset(&stored_credentials, 0, sizeof(stored_credentials));
     stored_credentials.valid = false;
-    
+
     // Effacer de la mémoire flash
     wifi_prefs.begin("wifi", false);
     wifi_prefs.clear();
     wifi_prefs.end();
-    
+
     kernel_log(LOG_LEVEL_INFO, "WiFi credentials cleared from flash");
 }
 
@@ -126,52 +127,52 @@ SysError_t connect_to_wifi(const char* ssid, const char* password) {
         kernel_log(LOG_LEVEL_ERROR, "Invalid connection parameters");
         return SYS_INVALID_PARAM;
     }
-    
+
     kernel_log(LOG_LEVEL_INFO, "Connecting to WiFi: %s", ssid);
-    
+
     // Vérifier que le WiFi est en mode STA
     if (WiFi.getMode() != WIFI_MODE_STA) {
         kernel_log(LOG_LEVEL_WARN, "Setting WiFi mode to STA");
         WiFi.mode(WIFI_STA);
         delay(100);
     }
-    
+
     // Tenter la connexion
     WiFi.begin(ssid, password);
-    
+
     // Attendre la connexion avec timeout configurable
     const int max_attempts = 30; // 15 secondes au lieu de 10
     const int attempt_delay = 500; // 500ms entre les tentatives
-    
+
     int attempts = 0;
     wl_status_t last_status = WL_IDLE_STATUS;
-    
+
     while (WiFi.status() != WL_CONNECTED && attempts < max_attempts) {
         wl_status_t current_status = WiFi.status();
-        
+
         // Log les changements de statut
         if (current_status != last_status) {
             kernel_log(LOG_LEVEL_INFO, "WiFi status changed: %d -> %d", last_status, current_status);
             last_status = current_status;
         }
-        
+
         delay(attempt_delay);
         Serial.print(".");
         attempts++;
     }
-    
+
     Serial.println();
-    
+
     // Analyser le résultat
     wl_status_t final_status = WiFi.status();
-    
+
     if (final_status == WL_CONNECTED) {
         kernel_log(LOG_LEVEL_INFO, "WiFi connected successfully!");
-        kernel_log(LOG_LEVEL_INFO, "IP: %s, Gateway: %s, RSSI: %d dBm", 
+        kernel_log(LOG_LEVEL_INFO, "IP: %s, Gateway: %s, RSSI: %d dBm",
                   WiFi.localIP().toString().c_str(),
                   WiFi.gatewayIP().toString().c_str(),
                   WiFi.RSSI());
-        
+
         // SAUVEGARDE AUTOMATIQUE des credentials après connexion réussie
         SysError_t save_result = save_wifi_credentials(ssid, password);
         if (save_result == SYS_OK) {
@@ -179,7 +180,7 @@ SysError_t connect_to_wifi(const char* ssid, const char* password) {
         } else {
             kernel_log(LOG_LEVEL_WARN, "Failed to save credentials automatically");
         }
-        
+
         return SYS_OK;
     } else {
         // Log détaillé de l'erreur
@@ -204,7 +205,7 @@ SysError_t connect_to_wifi(const char* ssid, const char* password) {
                 error_msg = "Unknown status";
                 break;
         }
-        
+
         kernel_log(LOG_LEVEL_ERROR, "WiFi connection failed: %s (status: %d)", error_msg, final_status);
         return SYS_ERROR;
     }
@@ -213,18 +214,18 @@ SysError_t connect_to_wifi(const char* ssid, const char* password) {
 // Tâche principale du système (simplifiée)
 void system_main_task(void* parameter) {
     SERIAL_PRINTLN_MINIMAL("Main task start");
-    
+
     int main_counter = 0;
     while (system_running) {
         if (main_counter % 300 == 0) { // Toutes les 5 minutes au lieu de 30 secondes
-            kernel_log(LOG_LEVEL_INFO, "System - Run: %d, Heap: %lu", 
+            kernel_log(LOG_LEVEL_INFO, "System - Run: %d, Heap: %lu",
                          main_counter, esp_get_free_heap_size());
         }
-        
+
         main_counter++;
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-    
+
     SERIAL_PRINTLN_MINIMAL("Main task stop");
     vTaskDelete(NULL);
 }
@@ -232,23 +233,23 @@ void system_main_task(void* parameter) {
 // Tâche de synchronisation automatique du temps
 void time_sync_task(void* parameter) {
     kernel_log(LOG_LEVEL_INFO, "Time sync task start");
-    
+
     while (system_running) {
         // Synchronisation automatique toutes les heures
         SysError_t result = time_sync_automatic();
         if (result == SYS_OK) {
             TimeSource_t source = time_sync_get_current_source();
-            kernel_log(LOG_LEVEL_INFO, "Time sync OK - Source: %s", 
+            kernel_log(LOG_LEVEL_INFO, "Time sync OK - Source: %s",
                       (source == TIME_SOURCE_NTP) ? "NTP" :
                       (source == TIME_SOURCE_RTC) ? "RTC" : "SYSTEM");
         } else {
             kernel_log(LOG_LEVEL_WARN, "Time sync failed");
         }
-        
+
         // Attendre 1 heure (3600000 ms)
         vTaskDelay(pdMS_TO_TICKS(3600000));
     }
-    
+
     kernel_log(LOG_LEVEL_INFO, "Time sync task stop");
     vTaskDelete(NULL);
 }
@@ -256,21 +257,21 @@ void time_sync_task(void* parameter) {
 // Tâche de surveillance WiFi (optimisée)
 void wifi_supervision_task(void* parameter) {
     kernel_log(LOG_LEVEL_INFO, "WiFi task start");
-    
+
     int supervision_counter = 0;
     bool was_connected = false;
     int reconnect_attempts = 0;
     int weak_signal_counter = 0;
     int last_rssi = 0;
-    
+
     while (system_running) {
         bool is_connected = (WiFi.status() == WL_CONNECTED);
         int current_rssi = is_connected ? WiFi.RSSI() : 0;
-        
+
         // Détecter les changements de statut (toujours loggé)
         if (is_connected != was_connected) {
             if (is_connected) {
-                kernel_log(LOG_LEVEL_INFO, "WiFi CON - IP: %s, RSSI: %d", 
+                kernel_log(LOG_LEVEL_INFO, "WiFi CON - IP: %s, RSSI: %d",
                           WiFi.localIP().toString().c_str(), current_rssi);
             } else {
                 kernel_log(LOG_LEVEL_WARN, "WiFi DIS");
@@ -284,21 +285,21 @@ void wifi_supervision_task(void* parameter) {
             was_connected = is_connected;
             reconnect_attempts = 0; // Reset counter on status change
         }
-        
+
         // Log périodique du statut (toutes les 30 minutes)
         if (supervision_counter % 1800 == 0) { // Toutes les 30 minutes au lieu de 10
             if (is_connected) {
-                kernel_log(LOG_LEVEL_INFO, "WiFi - Status: CON, RSSI: %d, IP: %s", 
+                kernel_log(LOG_LEVEL_INFO, "WiFi - Status: CON, RSSI: %d, IP: %s",
                           current_rssi, WiFi.localIP().toString().c_str());
             } else {
                 kernel_log(LOG_LEVEL_WARN, "WiFi - Status: DIS");
             }
         }
-        
+
         // Vérifier la qualité du signal (warning si faible, mais moins fréquent)
         if (is_connected && current_rssi < -80) {
             weak_signal_counter++;
-            
+
             // Log seulement toutes les 15 minutes pour éviter le spam
             if (weak_signal_counter % 900 == 0) { // Toutes les 15 minutes au lieu de 5
                 kernel_log(LOG_LEVEL_WARN, "WiFi - Weak signal: %d dBm", current_rssi);
@@ -306,24 +307,24 @@ void wifi_supervision_task(void* parameter) {
         } else {
             weak_signal_counter = 0; // Reset counter when signal is good
         }
-        
+
         // Détecter les changements significatifs de RSSI (seulement si très important)
         if (is_connected && abs(current_rssi - last_rssi) > 20) { // Augmenté de 10 à 20 dBm
             // Log seulement toutes les 5 minutes pour éviter le spam
             static int rssi_log_counter = 0;
             rssi_log_counter++;
-            
+
             if (rssi_log_counter % 300 == 0) { // Toutes les 5 minutes
                 kernel_log(LOG_LEVEL_INFO, "RSSI change: %d -> %d", last_rssi, current_rssi);
                 rssi_log_counter = 0; // Reset counter
             }
             last_rssi = current_rssi;
         }
-        
+
         // Tentative de reconnexion si déconnecté
         if (!is_connected && load_wifi_credentials()) {
             reconnect_attempts++;
-            
+
             if (reconnect_attempts % 60 == 0) { // Toutes les 60 secondes au lieu de 30
                 kernel_log(LOG_LEVEL_INFO, "Reconnect %d", reconnect_attempts / 60);
                 WiFi.disconnect();
@@ -333,11 +334,11 @@ void wifi_supervision_task(void* parameter) {
         } else if (is_connected) {
             reconnect_attempts = 0; // Reset counter when connected
         }
-        
+
         supervision_counter++;
         vTaskDelay(pdMS_TO_TICKS(1000)); // 1 seconde
     }
-    
+
     kernel_log(LOG_LEVEL_INFO, "WiFi task stop");
     vTaskDelete(NULL);
 }
@@ -348,29 +349,29 @@ void display_system_logo() {
     Serial.println("        ██████╗ ██ ██████╗      OS: D'O-CORE v" DO_CORE_VERSION " \"IRRIG Distro\"");
     Serial.println("        ██╔══██╗ ██╔═══██╗      Host: ESP32 DevKit");
     Serial.println("        ██║  ██║ ██║   ██║      Kernel: ESP-IDF");
-    
+
     // Calculer l'uptime
     uint32_t uptime_seconds = system_monitor_get_uptime(); // Utiliser la fonction du système de monitoring
     uint32_t hours = uptime_seconds / 3600;
     uint32_t minutes = (uptime_seconds % 3600) / 60;
     uint32_t seconds = uptime_seconds % 60;
     Serial.printf("        ██║  ██║ ██║   ██║      Uptime: %luh %lum %lus\n", hours, minutes, seconds);
-    
+
     // Informations système
     uint32_t free_heap = esp_get_free_heap_size();
     uint32_t total_heap = esp_get_minimum_free_heap_size() + free_heap;
     uint32_t used_heap = total_heap - free_heap;
     uint32_t cpu_freq = ESP.getCpuFreqMHz();
-    
+
     Serial.printf("        ██████╔╝ ╚██████╔╝      Packages: %d tasks\n", task_get_count());
     Serial.println("        ╚═════╝  ╚═════╝        Shell: DORUS-CORE CLI");
     Serial.printf("                                CPU: %luMHz\n", cpu_freq);
     Serial.printf("                                Memory: %luMB / %luMB\n", used_heap/1024, total_heap/1024);
-    
+
     // Santé du système
     String system_health = system_monitor_is_system_healthy() ? "HEALTHY" : "UNHEALTHY"; // Utiliser la fonction du système de monitoring
     Serial.printf("                                System Health: %s\n", system_health.c_str());
-    
+
     // Statut WiFi
     String wifi_status = "DISCONNECTED";
     String ip_address = "N/A";
@@ -386,19 +387,19 @@ void display_system_logo() {
     if (rssi_info.length() > 0) {
         Serial.printf("                                Signal: %s\n", rssi_info.c_str());
     }
-    
+
     // Informations sur les logs
     uint32_t log_count = log_system_get_count();
     uint32_t total_logs = log_system_get_total_messages();
     Serial.printf("                                Logs: %lu/%lu messages\n", log_count, total_logs);
-    
+
     // Heure locale
     time_t now = time(nullptr);
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
-    Serial.printf("                                Local Time: %02d:%02d:%02d\n", 
+    Serial.printf("                                Local Time: %02d:%02d:%02d\n",
                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-    
+
     Serial.println();
     Serial.printf("       v%s \"IRRIG Distro\"\n", DO_CORE_VERSION);
     Serial.println();
@@ -407,13 +408,13 @@ void display_system_logo() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    
+
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Init ===");
     SERIAL_PRINTF_MINIMAL("Ver: %s\n", DO_CORE_VERSION);
-    
+
     // Afficher la mémoire initiale
     SERIAL_PRINTF_MINIMAL("Heap: %lu\n", esp_get_free_heap_size());
-    
+
     // Initialiser NVS pour la persistance des données
     SERIAL_PRINTLN_MINIMAL("NVS init...");
     esp_err_t nvs_ret = nvs_flash_init();
@@ -424,10 +425,10 @@ void setup() {
     }
     ESP_ERROR_CHECK(nvs_ret);
     SERIAL_PRINTLN_MINIMAL("NVS OK");
-    
+
     // Initialiser seulement les composants essentiels
     SERIAL_PRINTLN_MINIMAL("Init components...");
-    
+
     // Gestionnaire de tâches
     SysError_t result = task_manager_init();
     if (result != SYS_OK) {
@@ -455,7 +456,7 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL("Monitor fail");
         return;
     }
-    
+
     // Démarrer le monitoring
     system_monitor_start();
 
@@ -512,12 +513,33 @@ void setup() {
         return;
     }
 
+    // Enregistrer l'application d'irrigation
+    IrrigAppConfig_t irrig_config;
+    strcpy(irrig_config.server_url, "http://10.223.73.53:3000");
+    strcpy(irrig_config.device_id, "ESP32_IRRIGATION_001");
+    strcpy(irrig_config.device_secret, "esp32-secret-key");
+    irrig_config.poll_interval_seconds = 30;
+    irrig_config.sensor_read_interval_seconds = 5;
+    irrig_config.data_send_interval_seconds = 15;
+    irrig_config.max_zones = 4;
+    irrig_config.max_sensors = 12;
+    irrig_config.simulation_mode = true;
+
+    SysError_t irrig_result = register_irrig_app_master(&irrig_config);
+    if (irrig_result == SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("IrrigApp registered");
+        kernel_log(LOG_LEVEL_INFO, "Irrigation application registered successfully");
+    } else {
+        SERIAL_PRINTLN_MINIMAL("IrrigApp register fail");
+        kernel_log(LOG_LEVEL_ERROR, "Failed to register irrigation application");
+    }
+
     // Initialiser le WiFi (sans connexion automatique)
     SERIAL_PRINTLN_MINIMAL("WiFi init (no auto)");
     kernel_log(LOG_LEVEL_INFO, "WiFi init");
     WiFi.mode(WIFI_STA);
     SERIAL_PRINTLN_MINIMAL("WiFi STA ready");
-    
+
     // Tenter la connexion automatique si des credentials sont sauvegardés
     SERIAL_PRINTLN_MINIMAL("Check saved WiFi...");
     kernel_log(LOG_LEVEL_INFO, "Check WiFi creds");
@@ -525,7 +547,7 @@ void setup() {
         SERIAL_PRINTF_MINIMAL("Found: %s\n", get_stored_ssid());
         kernel_log(LOG_LEVEL_INFO, "Found creds: %s", get_stored_ssid());
         SERIAL_PRINTLN_MINIMAL("Auto connect...");
-        
+
         if (connect_to_wifi(get_stored_ssid(), get_stored_password()) == SYS_OK) {
             SERIAL_PRINTLN_MINIMAL("WiFi OK");
             kernel_log(LOG_LEVEL_INFO, "WiFi auto OK");
@@ -539,22 +561,22 @@ void setup() {
         kernel_log(LOG_LEVEL_INFO, "No saved creds");
         SERIAL_PRINTLN_MINIMAL("Use 'wifi_save' to save");
     }
-    
+
     SERIAL_PRINTF_MINIMAL("Heap after WiFi: %lu\n", esp_get_free_heap_size());
-    
+
     // Synchronisation NTP initiale
     SERIAL_PRINTLN_MINIMAL("NTP sync...");
     kernel_log(LOG_LEVEL_INFO, "NTP sync");
-    
+
     NtpStatus_t sync_status = ntp_sync();
     if (sync_status == NTP_STATUS_SYNCED) {
         SERIAL_PRINTLN_MINIMAL("NTP OK");
         kernel_log(LOG_LEVEL_INFO, "NTP OK");
-        
+
         // Log avec timestamp précis
         time_t current_time = ntp_get_time();
         kernel_log(LOG_LEVEL_INFO, "Start: %s", ntp_format_time(current_time).c_str());
-        
+
         // Vérifier les conditions temporelles
         if (ntp_is_business_hours()) {
             kernel_log(LOG_LEVEL_INFO, "Business mode");
@@ -565,7 +587,7 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL(MSG_NTP_FAIL);
         kernel_log(LOG_LEVEL_WARN, MSG_NTP_FAIL);
     }
-    
+
     // Initialiser l'interface (simplifiée)
     SysError_t interface_result = interface_init();
     if (interface_result != SYS_OK) {
@@ -580,7 +602,7 @@ void setup() {
     if (initial_sync_result == SYS_OK) {
         SERIAL_PRINTLN_MINIMAL("Initial sync OK");
         kernel_log(LOG_LEVEL_INFO, "Initial time synchronization successful");
-        
+
         // Afficher l'heure actuelle
         time_t current_time = time_sync_get_current_time();
         kernel_log(LOG_LEVEL_INFO, "Current time: %s", time_sync_format_current_time().c_str());
@@ -592,12 +614,12 @@ void setup() {
     // Activer le système
     system_initialized = true;
     system_running = true;
-    
+
     // Créer les tâches essentielles seulement
     uint8_t task_id;
-    
+
     // Tâche principale
-    result = task_create_pinned_to_core("SystemMain", system_main_task, NULL, 
+    result = task_create_pinned_to_core("SystemMain", system_main_task, NULL,
                                        PRIORITY_NORMAL, STACK_SIZE_SMALL, 0, &task_id);
     if (result == SYS_OK) {
         SERIAL_PRINTF_MINIMAL("Main task: %d\n", task_id);
@@ -606,9 +628,9 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL(MSG_TASK_FAIL);
         kernel_log(LOG_LEVEL_ERROR, MSG_TASK_FAIL);
     }
-    
+
     // Tâche WiFi
-    result = task_create_pinned_to_core("WiFiSupervision", wifi_supervision_task, NULL, 
+    result = task_create_pinned_to_core("WiFiSupervision", wifi_supervision_task, NULL,
                                        PRIORITY_LOW, STACK_SIZE_SMALL, 0, &task_id);
     if (result == SYS_OK) {
         SERIAL_PRINTF_MINIMAL("WiFi task: %d\n", task_id);
@@ -617,9 +639,9 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL(MSG_TASK_FAIL);
         kernel_log(LOG_LEVEL_ERROR, MSG_TASK_FAIL);
     }
-    
+
     // Tâche de synchronisation du temps
-    result = task_create_pinned_to_core("TimeSync", time_sync_task, NULL, 
+    result = task_create_pinned_to_core("TimeSync", time_sync_task, NULL,
                                        PRIORITY_LOW, STACK_SIZE_SMALL, 0, &task_id);
     if (result == SYS_OK) {
         SERIAL_PRINTF_MINIMAL("Time sync task: %d\n", task_id);
@@ -628,27 +650,27 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL(MSG_TASK_FAIL);
         kernel_log(LOG_LEVEL_ERROR, MSG_TASK_FAIL);
     }
-    
+
     SERIAL_PRINTLN_MINIMAL("=== D'O-Core Ready ===");
     SERIAL_PRINTF_MINIMAL("Tasks: %d\n", task_get_count());
     SERIAL_PRINTF_MINIMAL("Heap: %lu\n", esp_get_free_heap_size());
-    
+
     kernel_log(LOG_LEVEL_INFO, "D'O-Core ready - Tasks: %d", task_get_count());
     kernel_log(LOG_LEVEL_INFO, "Final heap: %lu", esp_get_free_heap_size());
-    
+
     // Afficher le logo système
     display_system_logo();
-    
+
     // Démarrer le shell
     interface_start();
 }
 
 void loop() {
     // Boucle principale du système
-    
+
     // Boucle Application Manager
     app_manager_loop();
-    
+
     // Délai pour éviter de surcharger le CPU
     delay(10);
 }
