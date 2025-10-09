@@ -73,7 +73,6 @@ SysError_t cmd_network_test(int argc, char* argv[]);
 
 // Network commands - To be implemented
 
-// Les commandes SST ont été retirées de la version de base
 
 // Commandes HTTP Client
 SysError_t cmd_http_config(int argc, char* argv[]);
@@ -100,4 +99,4 @@ SysError_t cmd_time_sources(int argc, char* argv[]);
 
 // Reserved for future commands
 
-#endif // DO_CORE_INTERFACE_H 
+#endif // DO_CORE_INTERFACE_H
