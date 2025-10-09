@@ -8,7 +8,7 @@
 #define MAX_APPS 4
 #define APP_NAME_MAX_LENGTH 16
 #define APP_DESCRIPTION_MAX_LENGTH 32
-#define APP_STACK_SIZE_DEFAULT 2048  // Taille par défaut de la pile pour les applications
+#define APP_STACK_SIZE_DEFAULT 8192  // Taille par défaut de la pile pour les applications (augmenté pour éviter stack overflow)
 #define APP_PRIORITY_DEFAULT 5
 
 // États d'une application
@@ -76,7 +76,7 @@ SysError_t app_manager_init(void);
 void app_manager_deinit(void);
 
 // Gestion des applications
-SysError_t app_register(const char* name, const char* description, AppType_t type, 
+SysError_t app_register(const char* name, const char* description, AppType_t type,
                        const AppCallbacks_t* callbacks, uint8_t* app_id);
 SysError_t app_unregister(uint8_t app_id);
 SysError_t app_start(uint8_t app_id);
@@ -121,4 +121,4 @@ AppState_t app_manager_c_get_state(uint8_t app_id);
 }
 #endif
 
-#endif // APP_MANAGER_H 
+#endif // APP_MANAGER_H

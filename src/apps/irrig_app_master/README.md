@@ -352,6 +352,14 @@ http.addHeader("X-HMAC-Signature", signature);
    - Contrôle relais GPIO (4 zones + pompe)
    - Séquences d'irrigation sécurisées
 
+### ✅ **Corrections Appliquées**
+
+1. **Stack Overflow Corrigé** :
+   - **Problème** : `Stack canary watchpoint triggered (IrrigAppMaster)`
+   - **Cause** : Taille de pile insuffisante (2048 bytes)
+   - **Solution** : Augmentation à 8192 bytes dans `APP_STACK_SIZE_DEFAULT`
+   - **Fichier** : `src/kernel/app/app_manager.h`
+
 2. **Module Communication HTTP** :
    - Intégration ArduinoJson + HTTPClient
    - Endpoints serveur (register, config, sensor-data)
