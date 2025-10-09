@@ -4,7 +4,7 @@ Application pour le système D'O-Core OS permettant le contrôle intelligent d'u
 
 ## État du Développement
 
-**Version actuelle : 0.3.0 - MODULE ZONES**
+**Version actuelle : 0.4.0 - MODULE HTTP**
 - ✅ Structure de base créée
 - ✅ Callbacks d'application implémentés
 - ✅ Enregistrement dans le système
@@ -22,6 +22,13 @@ Application pour le système D'O-Core OS permettant le contrôle intelligent d'u
   - Moyennes d'humidité par zone
   - Détection besoins d'irrigation
   - Statistiques d'utilisation
+- ✅ **Module HTTP implémenté**
+  - Enregistrement automatique du device au serveur
+  - Envoi périodique des données capteurs (15s)
+  - Poll de configuration serveur (30s)
+  - Authentification HMAC-SHA256
+  - Gestion retry et erreurs
+  - Parsing JSON ArduinoJson
 - ⏳ Logique métier d'irrigation (modules suivants)
 
 ## Configuration
@@ -203,19 +210,147 @@ Chaque zone est initialisée avec :
 - **Association automatique** : Chaque zone utilise 3 capteurs spécifiques
 - **Validation croisée** : Seuils d'humidité comparés aux moyennes des capteurs
 
+## Module HTTP Implémenté
+
+### Fonctionnalités
+- **Enregistrement automatique** du device auprès du serveur au démarrage
+- **Envoi périodique** des données capteurs (intervalle `data_send_interval_seconds`)
+- **Poll de configuration** depuis le serveur (intervalle `poll_interval_seconds`)
+- **Authentification HMAC-SHA256** pour toutes les requêtes
+- **Gestion d'erreurs** avec retry automatique
+- **Parsing JSON** avec ArduinoJson
+- **Statistiques détaillées** de communication
+
+### Endpoints Utilisés
+
+#### **1. Enregistrement Device**
+```
+POST /api/devices/register
+Headers: X-HMAC-Signature, Content-Type: application/json
+Body: {device_id, device_secret, device_type, firmware_version, capabilities}
+```
+
+#### **2. Envoi Données Capteurs**
+```
+POST /api/sensor-data
+Headers: X-HMAC-Signature, X-Device-ID, Content-Type: application/json
+Body: {timestamp, device_id, zones[{zone_id, moisture_avg, sensor_values[]}]}
+```
+
+#### **3. Poll Configuration**
+```
+GET /api/devices/{device_id}/config
+Headers: X-HMAC-Signature, X-Device-ID
+Response: {config_updated, zones[{configured, zone_name, water_per_day_ml, irrigation_time, ...}]}
+```
+
+### Structure des Données
+
+#### **Payload Données Capteurs**
+```cpp
+typedef struct {
+    uint32_t timestamp;
+    uint8_t zone_count;  // 4
+    struct {
+        uint8_t zone_id;        // 0-3
+        float moisture_avg;     // Moyenne humidité zone
+        uint8_t sensor_count;   // 3
+        float sensor_values[3]; // Valeurs individuelles
+    } zones[4];
+} SensorDataPayload_t;
+```
+
+#### **Réponse Configuration Serveur**
+```cpp
+typedef struct {
+    bool config_updated;
+    uint32_t server_timestamp;
+    struct {
+        bool configured;
+        char zone_name[16];
+        uint16_t water_per_day_ml;
+        char irrigation_time[6];     // "HH:MM"
+        uint8_t humidity_threshold;
+        bool auto_irrigation_enabled;
+    } zones[4];
+} ServerConfigResponse_t;
+```
+
+### Workflow de Communication
+
+```
+ESP32 Démarrage
+    ↓
+WiFi Connecté
+    ↓
+HTTP Test Connectivity (/api/health)
+    ↓
+HTTP Register Device (/api/devices/register)
+    ↓
+Boucle Principale:
+    ├── Toutes les 5s:  Lecture capteurs
+    ├── Toutes les 15s: HTTP Send Data (/api/sensor-data)
+    └── Toutes les 30s: HTTP Poll Config (/api/devices/{id}/config)
+```
+
+### Authentification HMAC-SHA256
+
+```cpp
+// Génération HMAC pour authentification
+String hmac_data = data + device_secret;
+String signature = http_generate_hmac(hmac_data, device_secret);
+
+// Header ajouté à toutes les requêtes
+http.addHeader("X-HMAC-Signature", signature);
+```
+
+### Logs Attendus
+
+```
+[INFO] HTTP Manager: Initialized - Ready for server communication
+[INFO] IrrigAppMaster: Testing server connectivity...
+[INFO] HTTP Manager: Server connectivity OK
+[INFO] IrrigAppMaster: Registering device with server...
+[INFO] HTTP Manager: Device registered successfully
+[DEBUG] IrrigAppMaster: Sensor data sent to server
+[DEBUG] IrrigAppMaster: Server config polled successfully
+[INFO] === HTTP MANAGER STATS ===
+[INFO] Initialized: YES
+[INFO] Data sends: 5
+[INFO] Config polls: 2
+[INFO] Total errors: 0
+```
+
+### Gestion d'Erreurs
+
+#### **Codes d'Erreur**
+- `HTTP_IRRIG_OK` - Succès
+- `HTTP_IRRIG_ERROR_INIT` - Module non initialisé
+- `HTTP_IRRIG_ERROR_CONNECT` - Pas de connexion WiFi
+- `HTTP_IRRIG_ERROR_TIMEOUT` - Timeout HTTP
+- `HTTP_IRRIG_ERROR_AUTH` - Erreur d'authentification
+- `HTTP_IRRIG_ERROR_JSON` - Erreur parsing JSON
+- `HTTP_IRRIG_ERROR_SERVER` - Erreur serveur (404, 500, etc.)
+
+#### **Retry Automatique**
+- **Enregistrement device** : Retry toutes les 30 secondes si échec
+- **Envoi données** : Continue même en cas d'erreur (logs warning)
+- **Poll config** : Retry automatique avec backoff
+
 ## Prochaines Étapes
 
-### ✅ **Terminé - Modules Capteurs + Zones**
+### ✅ **Terminé - Modules Capteurs + Zones + HTTP**
 - ✅ **Module Capteurs** : 12 capteurs simulés, organisation par zones, lecture périodique
 - ✅ **Module Zones** : 4 zones configurables, paramètres par zone, états runtime, détection irrigation
+- ✅ **Module HTTP** : Communication serveur complète, enregistrement device, envoi données, poll config
 
 ### 🔄 **En Cours - Prochains Modules**
 
-1. **Module Communication HTTP** :
-   - Intégration ArduinoJson + HTTPClient
-   - Endpoints serveur (register, config, sensor-data)
-   - Authentification HMAC-SHA256
-   - Gestion retry et erreurs
+1. **Module Contrôle d'Irrigation** :
+   - Irrigation programmée (planning horaire)
+   - Irrigation d'urgence (seuils critiques)
+   - Contrôle relais GPIO (4 zones + pompe)
+   - Séquences d'irrigation sécurisées
 
 2. **Module Communication HTTP** :
    - Intégration ArduinoJson + HTTPClient

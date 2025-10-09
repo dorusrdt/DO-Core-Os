@@ -186,6 +186,84 @@ bool zone_is_configured(uint8_t zone_id);
 // Obtenir le nombre de zones configurées
 uint8_t zone_get_configured_count(void);
 
+// ===== MODULE HTTP COMMUNICATION =====
+
+// Codes d'erreur HTTP spécifiques
+typedef enum {
+    HTTP_IRRIG_OK = 0,
+    HTTP_IRRIG_ERROR_INIT,
+    HTTP_IRRIG_ERROR_CONNECT,
+    HTTP_IRRIG_ERROR_TIMEOUT,
+    HTTP_IRRIG_ERROR_AUTH,
+    HTTP_IRRIG_ERROR_JSON,
+    HTTP_IRRIG_ERROR_SERVER
+} HttpIrrigError_t;
+
+// Structure pour les données capteurs à envoyer
+typedef struct {
+    uint32_t timestamp;
+    uint8_t zone_count;
+    struct {
+        uint8_t zone_id;
+        float moisture_avg;
+        uint8_t sensor_count;
+        float sensor_values[3];  // 3 capteurs par zone
+    } zones[4];
+} SensorDataPayload_t;
+
+// Structure pour la réponse de configuration serveur
+typedef struct {
+    bool config_updated;
+    uint32_t server_timestamp;
+    struct {
+        bool configured;
+        char zone_name[16];
+        uint16_t water_per_day_ml;
+        char irrigation_time[6];
+        uint8_t humidity_threshold;
+        bool auto_irrigation_enabled;
+    } zones[4];
+} ServerConfigResponse_t;
+
+// Gestionnaire HTTP
+typedef struct {
+    bool initialized;
+    uint32_t last_register_attempt;
+    uint32_t last_data_send;
+    uint32_t last_config_poll;
+    uint32_t register_retry_count;
+    uint32_t data_send_count;
+    uint32_t config_poll_count;
+    uint32_t error_count;
+    HttpIrrigError_t last_error;
+} HttpManager_t;
+
+// ===== FONCTIONS MODULE HTTP =====
+
+// Initialisation du gestionnaire HTTP
+void http_manager_init(void);
+
+// Enregistrement du device auprès du serveur
+HttpIrrigError_t http_register_device(void);
+
+// Envoi des données capteurs au serveur
+HttpIrrigError_t http_send_sensor_data(void);
+
+// Récupération de la configuration depuis le serveur
+HttpIrrigError_t http_poll_server_config(void);
+
+// Test de connectivité avec le serveur
+HttpIrrigError_t http_test_connectivity(void);
+
+// Affichage des statistiques HTTP
+void http_print_stats(void);
+
+// Fonctions utilitaires
+String http_generate_hmac(const String& data, const String& secret);
+String http_build_sensor_json(const SensorDataPayload_t* data);
+bool http_parse_config_response(const String& json_response, ServerConfigResponse_t* config);
+String http_get_error_string(HttpIrrigError_t error);
+
 // Fonction d'enregistrement de l'application
 SysError_t register_irrig_app_master(const IrrigAppConfig_t* config);
 
