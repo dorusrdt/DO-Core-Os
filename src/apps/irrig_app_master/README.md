@@ -2,48 +2,68 @@
 
 Application pour le système D'O-Core OS permettant le contrôle intelligent d'un système d'irrigation.
 
+**🎯 BASÉ SUR LE CODE DE RÉFÉRENCE** - Architecture ZONE_STACK / SENSOR_STACK
+
 ## État du Développement
 
-**Version actuelle : 0.4.0 - MODULE HTTP**
-- ✅ Structure de base créée
-- ✅ Callbacks d'application implémentés
-- ✅ Enregistrement dans le système
-- ✅ Tests de lancement possibles
-- ✅ **Module Capteurs implémenté**
-  - Simulation réaliste des 12 capteurs
-  - Gestion des valeurs d'humidité (0-100%)
-  - Organisation par zones (4 zones × 3 capteurs)
-  - Lecture périodique configurable
-  - Logs détaillés et debug
-- ✅ **Module Zones implémenté**
-  - Configuration des 4 zones d'irrigation
-  - Paramètres par zone (eau/jour, heure irrigation, seuils)
-  - États runtime (actif/inactif/irrigation/erreur)
-  - Moyennes d'humidité par zone
-  - Détection besoins d'irrigation
-  - Statistiques d'utilisation
-- ✅ **Module HTTP implémenté**
-  - Enregistrement automatique du device au serveur
-  - Envoi périodique des données capteurs (15s)
-  - Poll de configuration serveur (30s)
-  - Authentification HMAC-SHA256
-  - Gestion retry et erreurs
-  - Parsing JSON ArduinoJson
-- ⏳ Logique métier d'irrigation (modules suivants)
+**Version actuelle : 1.0.0 - PRODUCTION READY** ✅
+
+### ✅ Architecture (Code Référence)
+- **ZONE_STACK** : Gestion dynamique 4 zones avec IDs serveur
+- **SENSOR_STACK** : Assignation dynamique 12 capteurs
+- Mapping séquentiel capteurs → zones
+- Préservation zones existantes lors updates
+- Support commandes serveur (delete_zone)
+
+### ✅ Gestion Capteurs
+- Simulation réaliste par type de culture (Tomates, Laitue, Carottes, Mixte)
+- Lecture périodique configurable (5s)
+- Données environnementales globales (température, humidité, pression)
+- Support hardware réel (ADC pins 32-39, 25-27, 14, 12-13)
+- Logs détaillés par zone et capteur
+
+### ✅ Gestion Zones
+- Configuration dynamique depuis serveur
+- Paramètres : eau/jour, heure irrigation, seuils humidité
+- Assignation/libération capteurs automatique
+- Suppression zones à chaud (handleZoneDeletion)
+- Calcul moyennes humidité par zone
+
+### ✅ Communication HTTP
+- Enregistrement device (type: "register")
+- Envoi données capteurs avec globalData (15s)
+- Poll configuration serveur (10s)
+- Format JSON compatible serveur référence
+- Authentification HMAC-SHA256
+- Gestion retry et erreurs
+
+### ✅ Contrôle Irrigation
+- **Irrigation programmée** : Selon heure configurée (checkIrrigationSchedule)
+- **Irrigation d'urgence** : Seuils critiques (checkMoistureThresholds)
+- **Contrôle physique** : Relais zones + pompe (executeIrrigation)
+- **Timer automatique** : Arrêt après durée (checkIrrigationTimer)
+- **Sécurité** : Arrêt d'urgence si suppression zone
+
+### ✅ Intégration DO-Core OS
+- WiFi géré par kernel (pas de reconnexion manuelle)
+- NTP géré par kernel (getLocalTime)
+- Logs via kernel_log
+- Callbacks app_manager (init/start/loop/stop)
+- Tâche FreeRTOS dédiée
 
 ## Configuration
 
 ```cpp
 IrrigAppConfig_t config = {
     .server_url = "http://10.223.73.53:3000",
-    .device_id = "ESP32_IRRIGATION_001",
-    .device_secret = "esp32-secret-key",
-    .poll_interval_seconds = 30,
-    .sensor_read_interval_seconds = 5,
-    .data_send_interval_seconds = 15,
+    .device_id = "ESP32_IRRIGATION_11100454456464674",  // ID serveur
+    .device_secret = "esp32-secure-key-2024",           // Secret serveur
+    .poll_interval_seconds = 10,        // 10s (comme code référence)
+    .sensor_read_interval_seconds = 5,  // 5s
+    .data_send_interval_seconds = 15,   // 15s
     .max_zones = 4,
     .max_sensors = 12,
-    .simulation_mode = true
+    .simulation_mode = true  // false pour hardware réel
 };
 ```
 

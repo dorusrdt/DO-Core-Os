@@ -516,11 +516,11 @@ void setup() {
     // Enregistrer l'application d'irrigation
     IrrigAppConfig_t irrig_config;
     strcpy(irrig_config.server_url, "http://10.223.73.53:3000");
-    strcpy(irrig_config.device_id, "ESP32_IRRIGATION_001");
-    strcpy(irrig_config.device_secret, "esp32-secret-key");
-    irrig_config.poll_interval_seconds = 30;
-    irrig_config.sensor_read_interval_seconds = 5;
-    irrig_config.data_send_interval_seconds = 15;
+    strcpy(irrig_config.device_id, "ESP32_IRRIGATION_11100454456464674");  // ID du code référence
+    strcpy(irrig_config.device_secret, "esp32-secure-key-2024");           // Secret du code référence
+    irrig_config.poll_interval_seconds = 10;        // 10s comme code référence
+    irrig_config.sensor_read_interval_seconds = 5;  // 5s
+    irrig_config.data_send_interval_seconds = 15;   // 15s
     irrig_config.max_zones = 4;
     irrig_config.max_sensors = 12;
     irrig_config.simulation_mode = true;
