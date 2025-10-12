@@ -515,7 +515,7 @@ void setup() {
 
     // Enregistrer l'application d'irrigation
     IrrigAppConfig_t irrig_config;
-    strcpy(irrig_config.server_url, "http://192.168.1.3:3000");            // Serveur de test FastAPI
+    strcpy(irrig_config.server_url, "http://10.232.133.53:3000");            // Serveur de test FastAPI
     strcpy(irrig_config.device_id, "ESP32_IRRIGATION_11100454456464674");  // ID du code référence
     strcpy(irrig_config.device_secret, "esp32-secure-key-2024");           // Secret du code référence
     irrig_config.poll_interval_seconds = 10;        // 10s comme code référence
