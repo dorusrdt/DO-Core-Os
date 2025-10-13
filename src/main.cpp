@@ -14,6 +14,7 @@
 #include "kernel/network/wifi_manager.h"
 #include "kernel/network/ntp_manager.h"
 #include "kernel/network/http_client.h"
+#include "kernel/network/ota_manager.h"
 #include "kernel/app/app_manager.h"
 #include "kernel/core/minimal_config.h"
 #include "kernel/hal/rtc_manager.h"
@@ -401,7 +402,7 @@ void display_system_logo() {
                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
     Serial.println();
-    Serial.printf("       v%s \"IRRIG Distro\"\n", DO_CORE_VERSION);
+    Serial.printf("       v%s \"IRRIG Distro OTA chg\"\n", DO_CORE_VERSION);
     Serial.println();
 }
 
@@ -481,6 +482,19 @@ void setup() {
         return;
     }
     SERIAL_PRINTLN_MINIMAL("HTTP Client OK");
+
+    // Initialiser le module OTA
+    SERIAL_PRINTLN_MINIMAL("OTA Manager init...");
+    kernel_log(LOG_LEVEL_INFO, "OTA Manager init");
+    SysError_t ota_result = ota_manager_module_init();
+    if (ota_result != SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("OTA Manager fail");
+        kernel_log(LOG_LEVEL_ERROR, "OTA Manager init failed");
+        // Continue sans OTA (mode dégradé)
+    } else {
+        SERIAL_PRINTLN_MINIMAL("OTA Manager OK");
+        kernel_log(LOG_LEVEL_INFO, "OTA Manager initialized successfully");
+    }
 
     // Initialiser le gestionnaire RTC DS3231
     SERIAL_PRINTLN_MINIMAL("RTC init...");

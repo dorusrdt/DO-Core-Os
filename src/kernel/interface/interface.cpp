@@ -6,6 +6,7 @@
 #include "../network/wifi_manager.h"
 #include "../network/ntp_manager.h"
 #include "../network/http_client.h"
+#include "../network/ota_manager.h"
 #include "../app/app_manager.h"
 #include "../hal/rtc_manager.h"
 #include "../hal/time_sync_manager.h"
@@ -16,7 +17,6 @@
 extern SysError_t cmd_http_config(int argc, char* argv[]);
 extern SysError_t cmd_http_get(int argc, char* argv[]);
 extern SysError_t cmd_http_post(int argc, char* argv[]);
-extern SysError_t cmd_http_put(int argc, char* argv[]);
 extern SysError_t cmd_http_delete(int argc, char* argv[]);
 extern SysError_t cmd_http_patch(int argc, char* argv[]);
 extern SysError_t cmd_http_head(int argc, char* argv[]);
@@ -24,6 +24,14 @@ extern SysError_t cmd_http_options(int argc, char* argv[]);
 extern SysError_t cmd_http_test(int argc, char* argv[]);
 extern SysError_t cmd_http_stats(int argc, char* argv[]);
 extern SysError_t cmd_http_debug(int argc, char* argv[]);
+
+// Inclure les commandes OTA
+extern SysError_t cmd_ota_start(int argc, char* argv[]);
+extern SysError_t cmd_ota_stop(int argc, char* argv[]);
+extern SysError_t cmd_ota_status(int argc, char* argv[]);
+extern SysError_t cmd_ota_info(int argc, char* argv[]);
+extern SysError_t cmd_ota_stats(int argc, char* argv[]);
+extern SysError_t cmd_ota_url(int argc, char* argv[]);
 
 // Déclarations des fonctions de commandes
 SysError_t cmd_network_test(int argc, char* argv[]);
@@ -217,6 +225,14 @@ SysError_t interface_init(void) {
     add_command("time_source", "Show current time source", cmd_time_source);
     add_command("time_sync", "Force time synchronization", cmd_time_sync);
     add_command("time_sources", "Show detailed time sources info", cmd_time_sources);
+
+    // Commandes OTA
+    add_command("ota_start", "Start OTA web server", cmd_ota_start);
+    add_command("ota_stop", "Stop OTA web server", cmd_ota_stop);
+    add_command("ota_status", "Show OTA server status", cmd_ota_status);
+    add_command("ota_info", "Show firmware version info", cmd_ota_info);
+    add_command("ota_stats", "Show OTA statistics", cmd_ota_stats);
+    add_command("ota_url", "Show OTA update URL", cmd_ota_url);
 
     Serial.printf("Interface initialized with %d/%d commands\n", command_count, MAX_COMMANDS);
 
