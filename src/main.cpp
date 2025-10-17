@@ -19,6 +19,7 @@
 #include "kernel/core/minimal_config.h"
 #include "kernel/hal/rtc_manager.h"
 #include "kernel/hal/time_sync_manager.h"
+#include "kernel/hal/heartbeat_led.h"
 #include "apps/irrig_app_master/irrig_app_master.h"
 #include "apps/irrig_app_master/irrig_app_master_http.h"
 #include "apps/irrig_app_slave_sensors/irrig_app_slave_sensors.h"
@@ -310,11 +311,18 @@ void wifi_supervision_task(void* parameter) {
                 kernel_log(LOG_LEVEL_INFO, "WiFi CON - IP: %s, RSSI: %d",
                           WiFi.localIP().toString().c_str(), current_rssi);
                 
+                // Mettre à jour heartbeat
+                heartbeat_set_state(HEARTBEAT_READY);
+                
                 // Déclencher une synchronisation immédiate du temps
                 kernel_log(LOG_LEVEL_INFO, "WiFi reconnected - triggering immediate time sync");
                 time_sync_request_immediate();
             } else {
                 kernel_log(LOG_LEVEL_WARN, "WiFi DIS");
+                
+                // Mettre à jour heartbeat
+                heartbeat_set_state(HEARTBEAT_WIFI_ERROR);
+                
                 if (load_wifi_credentials()) {
                     kernel_log(LOG_LEVEL_INFO, "Reconnect with creds");
                     WiFi.begin(get_stored_ssid(), get_stored_password());
@@ -549,6 +557,28 @@ void setup() {
     }
     SERIAL_PRINTLN_MINIMAL("HTTP Client OK");
 
+    // Initialiser le heartbeat LED (dès le début)
+    SERIAL_PRINTLN_MINIMAL("Heartbeat init...");
+    heartbeat_init();
+    heartbeat_set_state(HEARTBEAT_BOOTING);
+    
+    // Créer la tâche heartbeat immédiatement pour voir le pattern de boot
+    uint8_t heartbeat_task_id;
+    result = task_create_pinned_to_core("Heartbeat", heartbeat_task, NULL,
+                                       PRIORITY_LOW, STACK_SIZE_SMALL, 0, &heartbeat_task_id);
+    if (result == SYS_OK) {
+        SERIAL_PRINTLN_MINIMAL("Heartbeat task started");
+    } else {
+        SERIAL_PRINTLN_MINIMAL("Heartbeat task fail");
+    }
+    
+    // Initialiser le système de logs
+    SERIAL_PRINTLN_MINIMAL("Log system init...");
+    log_system_init();
+    kernel_log(LOG_LEVEL_INFO, "=== D'O-Core OS Starting ===");
+    kernel_log(LOG_LEVEL_INFO, "Version: 1.0.0");
+    kernel_log(LOG_LEVEL_INFO, "Build: %s %s", __DATE__, __TIME__);
+
     // Initialiser le module OTA
     SERIAL_PRINTLN_MINIMAL("OTA Manager init...");
     kernel_log(LOG_LEVEL_INFO, "OTA Manager init");
@@ -610,15 +640,18 @@ void setup() {
         if (connect_to_wifi(get_stored_ssid(), get_stored_password()) == SYS_OK) {
             SERIAL_PRINTLN_MINIMAL("WiFi OK");
             kernel_log(LOG_LEVEL_INFO, "WiFi auto OK");
+            heartbeat_set_state(HEARTBEAT_READY);  // WiFi connecté
         } else {
             SERIAL_PRINTLN_MINIMAL(MSG_WIFI_FAIL);
             SERIAL_PRINTLN_MINIMAL("Use 'wifi_save' to update");
             kernel_log(LOG_LEVEL_ERROR, MSG_WIFI_FAIL);
+            heartbeat_set_state(HEARTBEAT_WIFI_ERROR);  // WiFi échoué
         }
     } else {
         SERIAL_PRINTLN_MINIMAL("No saved creds");
         kernel_log(LOG_LEVEL_INFO, "No saved creds");
         SERIAL_PRINTLN_MINIMAL("Use 'wifi_save' to save");
+        heartbeat_set_state(HEARTBEAT_WIFI_ERROR);  // Pas de WiFi
     }
 
     SERIAL_PRINTF_MINIMAL("Heap after WiFi: %lu\n", esp_get_free_heap_size());
@@ -832,10 +865,12 @@ void setup() {
         Serial.printf("🚀 Auto-activating role: %s\n", role_name);
         kernel_log(LOG_LEVEL_INFO, "Auto-activating role: %s", role_name);
         irrig_cli_auto_activate_role();
+        heartbeat_set_state(HEARTBEAT_RUNNING);  // App active
     } else {
         Serial.println("⚠️  No role configured");
         Serial.println("   Use 'irrig_set_role' to configure");
         kernel_log(LOG_LEVEL_WARN, "No device role configured");
+        // Heartbeat reste en READY (pas d'app)
     }
     Serial.println();
 

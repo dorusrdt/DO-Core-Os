@@ -1,6 +1,7 @@
 #include "app_manager.h"
 #include "../core/task_manager.h"
 #include "../core/log_system_optimized.h"
+#include "../hal/heartbeat_led.h"
 #include <string.h>
 
 // Variables globales
@@ -275,6 +276,9 @@ SysError_t app_start(uint8_t app_id) {
         return SYS_ERROR;
     }
     
+    // Mettre à jour le heartbeat : app démarrée
+    heartbeat_set_state(HEARTBEAT_RUNNING);
+    
     xSemaphoreGive(app_manager_mutex);
     return SYS_OK;
 }
@@ -319,6 +323,20 @@ SysError_t app_stop(uint8_t app_id) {
         }
         
         SERIAL_PRINTF_MINIMAL("App %s stopped\n", app->info.name);
+        
+        // Vérifier s'il reste des apps actives
+        bool has_running_apps = false;
+        for (int i = 0; i < MAX_APPS; i++) {
+            if (apps[i].info.app_id != 0 && apps[i].info.state == APP_STATE_RUNNING) {
+                has_running_apps = true;
+                break;
+            }
+        }
+        
+        // Mettre à jour le heartbeat
+        if (!has_running_apps) {
+            heartbeat_set_state(HEARTBEAT_READY);  // Plus d'apps actives
+        }
     }
     
     xSemaphoreGive(app_manager_mutex);
@@ -358,6 +376,20 @@ SysError_t app_pause(uint8_t app_id) {
         }
         
         SERIAL_PRINTF_MINIMAL("App %s paused\n", app->info.name);
+        
+        // Vérifier s'il reste des apps actives (RUNNING, pas PAUSED)
+        bool has_running_apps = false;
+        for (int i = 0; i < MAX_APPS; i++) {
+            if (apps[i].info.app_id != 0 && apps[i].info.state == APP_STATE_RUNNING) {
+                has_running_apps = true;
+                break;
+            }
+        }
+        
+        // Mettre à jour le heartbeat
+        if (!has_running_apps) {
+            heartbeat_set_state(HEARTBEAT_READY);  // Plus d'apps actives
+        }
     }
     
     xSemaphoreGive(app_manager_mutex);
@@ -397,6 +429,9 @@ SysError_t app_resume(uint8_t app_id) {
         }
         
         SERIAL_PRINTF_MINIMAL("App %s resumed\n", app->info.name);
+        
+        // Mettre à jour le heartbeat : app active
+        heartbeat_set_state(HEARTBEAT_RUNNING);
     }
     
     xSemaphoreGive(app_manager_mutex);

@@ -24,7 +24,7 @@
 #define MOISTURE_PIN_12 13
 
 // Pins relais
-#define ZONE_1_RELAY_PIN 2
+#define ZONE_1_RELAY_PIN 15  // Déplacé de GPIO 2 → 15 (GPIO 2 réservé pour heartbeat)
 #define ZONE_2_RELAY_PIN 4
 #define ZONE_3_RELAY_PIN 16
 #define ZONE_4_RELAY_PIN 17
@@ -33,6 +33,7 @@
 // Pins indicateurs
 #define STATUS_LED_PIN   18
 #define BUZZER_PIN       19
+#define HEARTBEAT_LED_PIN 2  // LED intégrée du dev board (heartbeat système)
 
 // Seuils
 #define MOISTURE_DRY_VALUE 4095
