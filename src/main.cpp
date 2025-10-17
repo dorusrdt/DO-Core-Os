@@ -234,21 +234,40 @@ void system_main_task(void* parameter) {
 // Tâche de synchronisation automatique du temps
 void time_sync_task(void* parameter) {
     kernel_log(LOG_LEVEL_INFO, "Time sync task start");
+    
+    const uint32_t sync_interval_ms = 900000; // 15 minutes
+    const uint32_t check_interval_ms = 1000;  // Vérifier toutes les secondes
+    uint32_t elapsed_ms = 0;
 
     while (system_running) {
-        // Synchronisation automatique toutes les heures
-        SysError_t result = time_sync_automatic();
-        if (result == SYS_OK) {
-            TimeSource_t source = time_sync_get_current_source();
-            kernel_log(LOG_LEVEL_INFO, "Time sync OK - Source: %s",
-                      (source == TIME_SOURCE_NTP) ? "NTP" :
-                      (source == TIME_SOURCE_RTC) ? "RTC" : "SYSTEM");
-        } else {
-            kernel_log(LOG_LEVEL_WARN, "Time sync failed");
+        // Vérifier si une synchronisation immédiate est demandée
+        // ou si l'intervalle normal est écoulé
+        bool immediate_requested = time_sync_is_immediate_requested();
+        bool should_sync = (elapsed_ms >= sync_interval_ms) || immediate_requested;
+        
+        if (should_sync) {
+            if (immediate_requested) {
+                kernel_log(LOG_LEVEL_INFO, "Executing immediate time sync");
+            }
+            
+            // Synchronisation automatique toutes les 15 minutes (ou immédiate)
+            SysError_t result = time_sync_automatic();
+            if (result == SYS_OK) {
+                TimeSource_t source = time_sync_get_current_source();
+                kernel_log(LOG_LEVEL_INFO, "Time sync OK - Source: %s",
+                          (source == TIME_SOURCE_NTP) ? "NTP" :
+                          (source == TIME_SOURCE_RTC) ? "RTC" : "SYSTEM");
+            } else {
+                kernel_log(LOG_LEVEL_WARN, "Time sync failed");
+            }
+            
+            // Réinitialiser le compteur
+            elapsed_ms = 0;
         }
 
-        // Attendre 1 heure (3600000 ms)
-        vTaskDelay(pdMS_TO_TICKS(3600000));
+        // Attendre 1 seconde et incrémenter le compteur
+        vTaskDelay(pdMS_TO_TICKS(check_interval_ms));
+        elapsed_ms += check_interval_ms;
     }
 
     kernel_log(LOG_LEVEL_INFO, "Time sync task stop");
@@ -274,6 +293,10 @@ void wifi_supervision_task(void* parameter) {
             if (is_connected) {
                 kernel_log(LOG_LEVEL_INFO, "WiFi CON - IP: %s, RSSI: %d",
                           WiFi.localIP().toString().c_str(), current_rssi);
+                
+                // Déclencher une synchronisation immédiate du temps
+                kernel_log(LOG_LEVEL_INFO, "WiFi reconnected - triggering immediate time sync");
+                time_sync_request_immediate();
             } else {
                 kernel_log(LOG_LEVEL_WARN, "WiFi DIS");
                 if (load_wifi_credentials()) {
@@ -578,30 +601,6 @@ void setup() {
 
     SERIAL_PRINTF_MINIMAL("Heap after WiFi: %lu\n", esp_get_free_heap_size());
 
-    // Synchronisation NTP initiale
-    SERIAL_PRINTLN_MINIMAL("NTP sync...");
-    kernel_log(LOG_LEVEL_INFO, "NTP sync");
-
-    NtpStatus_t sync_status = ntp_sync();
-    if (sync_status == NTP_STATUS_SYNCED) {
-        SERIAL_PRINTLN_MINIMAL("NTP OK");
-        kernel_log(LOG_LEVEL_INFO, "NTP OK");
-
-        // Log avec timestamp précis
-        time_t current_time = ntp_get_time();
-        kernel_log(LOG_LEVEL_INFO, "Start: %s", ntp_format_time(current_time).c_str());
-
-        // Vérifier les conditions temporelles
-        if (ntp_is_business_hours()) {
-            kernel_log(LOG_LEVEL_INFO, "Business mode");
-        } else if (ntp_is_night_time()) {
-            kernel_log(LOG_LEVEL_INFO, "Night mode");
-        }
-    } else {
-        SERIAL_PRINTLN_MINIMAL(MSG_NTP_FAIL);
-        kernel_log(LOG_LEVEL_WARN, MSG_NTP_FAIL);
-    }
-
     // Initialiser l'interface (simplifiée)
     SysError_t interface_result = interface_init();
     if (interface_result != SYS_OK) {
@@ -609,20 +608,34 @@ void setup() {
         return;
     }
 
-    // Synchronisation initiale du temps
+    // Synchronisation initiale du temps (gère automatiquement NTP → RTC → System)
     SERIAL_PRINTLN_MINIMAL("Initial time sync...");
     kernel_log(LOG_LEVEL_INFO, "Performing initial time synchronization");
     SysError_t initial_sync_result = time_sync_automatic();
+    
     if (initial_sync_result == SYS_OK) {
-        SERIAL_PRINTLN_MINIMAL("Initial sync OK");
-        kernel_log(LOG_LEVEL_INFO, "Initial time synchronization successful");
+        TimeSource_t source = time_sync_get_current_source();
+        const char* source_name = (source == TIME_SOURCE_NTP) ? "NTP" :
+                                  (source == TIME_SOURCE_RTC) ? "RTC" : "SYSTEM";
+        
+        SERIAL_PRINTF_MINIMAL("Time sync OK - Source: %s\n", source_name);
+        kernel_log(LOG_LEVEL_INFO, "Initial time synchronization successful - Source: %s", source_name);
 
         // Afficher l'heure actuelle
         time_t current_time = time_sync_get_current_time();
         kernel_log(LOG_LEVEL_INFO, "Current time: %s", time_sync_format_current_time().c_str());
+        
+        // Vérifier les conditions temporelles (si NTP disponible)
+        if (source == TIME_SOURCE_NTP) {
+            if (ntp_is_business_hours()) {
+                kernel_log(LOG_LEVEL_INFO, "Business mode");
+            } else if (ntp_is_night_time()) {
+                kernel_log(LOG_LEVEL_INFO, "Night mode");
+            }
+        }
     } else {
         SERIAL_PRINTLN_MINIMAL("Initial sync failed");
-        kernel_log(LOG_LEVEL_WARN, "Initial time synchronization failed");
+        kernel_log(LOG_LEVEL_WARN, "Initial time synchronization failed - No valid time source");
     }
 
     // Activer le système

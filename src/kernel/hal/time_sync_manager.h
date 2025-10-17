@@ -50,6 +50,12 @@ TimeSyncStatus_t time_sync_get_status(void);
 // Obtenir des informations détaillées sur les sources de temps
 String time_sync_get_source_info(void);
 
+// Forcer une synchronisation immédiate (non-bloquante)
+void time_sync_request_immediate(void);
+
+// Vérifier si une synchronisation immédiate est demandée
+bool time_sync_is_immediate_requested(void);
+
 #ifdef __cplusplus
 }
 #endif

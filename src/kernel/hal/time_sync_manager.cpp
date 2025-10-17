@@ -10,6 +10,7 @@ static bool g_sync_initialized = false;
 static TimeSource_t g_current_source = TIME_SOURCE_UNKNOWN;
 static uint32_t g_sync_failures = 0;
 static uint32_t g_last_sync_attempt = 0;
+static volatile bool g_immediate_sync_requested = false;
 
 // Initialisation du gestionnaire de synchronisation
 SysError_t time_sync_init(void) {
@@ -39,9 +40,24 @@ SysError_t time_sync_automatic(void) {
 
     g_last_sync_attempt = millis();
     
+    // Réinitialiser le flag de synchronisation immédiate
+    g_immediate_sync_requested = false;
+    
     // Priorité : NTP > RTC > System Clock
     
     // 1. Vérifier NTP
+    // Si NTP n'est pas encore synchronisé, tenter une synchronisation
+    if (!ntp_is_synced()) {
+        kernel_log(LOG_LEVEL_INFO, "NTP not synced, attempting synchronization...");
+        NtpStatus_t ntp_status = ntp_sync();
+        if (ntp_status == NTP_STATUS_SYNCED) {
+            kernel_log(LOG_LEVEL_INFO, "NTP synchronization successful");
+        } else {
+            kernel_log(LOG_LEVEL_WARN, "NTP synchronization failed: status=%d", ntp_status);
+        }
+    }
+    
+    // Vérifier si NTP est maintenant synchronisé
     if (ntp_is_synced()) {
         time_t ntp_time = ntp_get_time();
         if (ntp_time > 1577836800) { // Après 2020
@@ -224,4 +240,15 @@ String time_sync_get_source_info(void) {
     info += "  Failures: " + String(g_sync_failures) + "\n";
     
     return info;
+}
+
+// Forcer une synchronisation immédiate (non-bloquante)
+void time_sync_request_immediate(void) {
+    g_immediate_sync_requested = true;
+    kernel_log(LOG_LEVEL_INFO, "Immediate time sync requested");
+}
+
+// Vérifier si une synchronisation immédiate est demandée
+bool time_sync_is_immediate_requested(void) {
+    return g_immediate_sync_requested;
 }
