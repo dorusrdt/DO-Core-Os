@@ -43,40 +43,8 @@ struct SensorSlot {
     String zoneId;             // Référence à la zone (vide si non assigné)
 };
 
-// Constantes pour les capteurs
-#define MAX_ZONES 4
-#define MAX_SENSORS 12
-#define SENSORS_PER_ZONE 10        // Maximum capteurs par zone
-#define MOISTURE_DRY_VALUE 4095    // ADC sec (0% humidité)
-#define MOISTURE_WET_VALUE 0       // ADC mouillé (100% humidité)
-#define MOISTURE_SAMPLES 5         // Nombre d'échantillons pour moyennage
-
-// ===== HARDWARE PINS =====
-
-// Pins relais (contrôle irrigation)
-#define ZONE_1_RELAY_PIN 2
-#define ZONE_2_RELAY_PIN 4
-#define ZONE_3_RELAY_PIN 16
-#define ZONE_4_RELAY_PIN 17
-#define PUMP_RELAY_PIN   5
-
-// Pins indicateurs
-#define STATUS_LED_PIN   18
-#define BUZZER_PIN       19
-
-// Pins ADC pour les capteurs d'humidité
-#define MOISTURE_PIN_1  32
-#define MOISTURE_PIN_2  33
-#define MOISTURE_PIN_3  34
-#define MOISTURE_PIN_4  35
-#define MOISTURE_PIN_5  36
-#define MOISTURE_PIN_6  39
-#define MOISTURE_PIN_7  25
-#define MOISTURE_PIN_8  26
-#define MOISTURE_PIN_9  27
-#define MOISTURE_PIN_10 14
-#define MOISTURE_PIN_11 12
-#define MOISTURE_PIN_12 13
+// Utiliser constantes communes (pas de duplication)
+#include "../irrig_common/irrig_types.h"
 
 // Seuils d'urgence
 #define CRITICAL_MOISTURE_THRESHOLD 15  // Irrigation d'urgence si < 15%
@@ -104,18 +72,16 @@ void pollConfiguration(void);
 void parseConfiguration(String jsonResponse);
 void handleZoneDeletion(String zoneId);
 
-// Gestion capteurs
-void readAllSensors(void);
-void updateSimulatedSensors(void);
-void readRealSensors(void);
+// Gestion capteurs (reçus des Slaves)
+void updateSensorDataFromSlave(float moisture[MAX_SENSORS], float temp, float hum, float press);
 
 // Communication serveur
 void sendSensorData(void);
 
-// Gestion irrigation
+// Gestion irrigation (commandes vers Slaves)
 void checkIrrigationSchedule(void);
 void checkMoistureThresholds(void);
-void executeIrrigation(String zoneId, int durationSeconds);
+void sendIrrigationCommand(String zoneId, int durationSeconds);
 void checkIrrigationTimer(void);
 
 // Utilitaires

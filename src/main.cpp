@@ -20,11 +20,27 @@
 #include "kernel/hal/rtc_manager.h"
 #include "kernel/hal/time_sync_manager.h"
 #include "apps/irrig_app_master/irrig_app_master.h"
+#include "apps/irrig_app_master/irrig_app_master_http.h"
+#include "apps/irrig_app_slave_sensors/irrig_app_slave_sensors.h"
+#include "apps/irrig_app_slave_relays/irrig_app_slave_relays.h"
+#include "apps/irrig_common/irrig_communication.h"
+#include "apps/irrig_common/irrig_cli_commands.h"
 #include <time.h>
 
 // Variables globales du système
 static bool system_initialized = false;
 volatile bool system_running = false;
+
+// IDs des apps enregistrées
+static uint8_t g_master_app_id = 0;
+static uint8_t g_slave1_app_id = 0;
+static uint8_t g_slave2_app_id = 0;
+
+// Données capteurs reçues (pour Master)
+static float g_received_moisture[12];
+static float g_received_temperature = 0;
+static float g_received_humidity = 0;
+static float g_received_pressure = 0;
 
 // Système de stockage persistant des credentials WiFi
 static Preferences wifi_prefs;
@@ -368,6 +384,33 @@ void wifi_supervision_task(void* parameter) {
 }
 
 // Fonction d'affichage du logo système style neofetch
+// ===== CALLBACKS POUR MASTER HTTP =====
+
+void on_sensor_data_received(SensorDataPacket_t* data) {
+    if (!data) return;
+    
+    kernel_log(LOG_LEVEL_DEBUG, "Master: Received sensor data from Slave1");
+    
+    for (int i = 0; i < 12; i++) {
+        g_received_moisture[i] = data->moisture[i];
+    }
+    g_received_temperature = data->temperature;
+    g_received_humidity = data->humidity;
+    g_received_pressure = data->pressure;
+    
+    updateSensorDataFromSlave(data->moisture, data->temperature, data->humidity, data->pressure);
+}
+
+void on_irrigation_status_received(IrrigationStatusPacket_t* status) {
+    if (!status) return;
+    
+    kernel_log(LOG_LEVEL_DEBUG, "Master: Received irrigation status from Slave2");
+    kernel_log(LOG_LEVEL_DEBUG, "  Zone: %d, Irrigating: %s, Remaining: %lus",
+               status->zone_id, status->is_irrigating ? "YES" : "NO", status->remaining_seconds);
+}
+
+// ===== LOGO SYSTÈME =====
+
 void display_system_logo() {
     Serial.println();
     Serial.println("        ██████╗ ██ ██████╗      OS: D'O-CORE v" DO_CORE_VERSION " \"IRRIG Distro\"");
@@ -550,27 +593,6 @@ void setup() {
         return;
     }
 
-    // Enregistrer l'application d'irrigation
-    IrrigAppConfig_t irrig_config;
-    strcpy(irrig_config.server_url, "http://10.232.133.53:3000");            // Serveur de test FastAPI
-    strcpy(irrig_config.device_id, "ESP32_IRRIGATION_11100454456464674");  // ID du code référence
-    strcpy(irrig_config.device_secret, "esp32-secure-key-2024");           // Secret du code référence
-    irrig_config.poll_interval_seconds = 10;        // 10s comme code référence
-    irrig_config.sensor_read_interval_seconds = 5;  // 5s
-    irrig_config.data_send_interval_seconds = 15;   // 15s
-    irrig_config.max_zones = 4;
-    irrig_config.max_sensors = 12;
-    irrig_config.simulation_mode = true;
-
-    SysError_t irrig_result = register_irrig_app_master(&irrig_config);
-    if (irrig_result == SYS_OK) {
-        SERIAL_PRINTLN_MINIMAL("IrrigApp registered");
-        kernel_log(LOG_LEVEL_INFO, "Irrigation application registered successfully");
-    } else {
-        SERIAL_PRINTLN_MINIMAL("IrrigApp register fail");
-        kernel_log(LOG_LEVEL_ERROR, "Failed to register irrigation application");
-    }
-
     // Initialiser le WiFi (sans connexion automatique)
     SERIAL_PRINTLN_MINIMAL("WiFi init (no auto)");
     kernel_log(LOG_LEVEL_INFO, "WiFi init");
@@ -607,6 +629,106 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL("Interface fail");
         return;
     }
+
+    // Charger configuration depuis NVS (y compris le rôle)
+    SERIAL_PRINTLN_MINIMAL("Load config...");
+    cmd_irrig_config_load(0, NULL);
+
+    // ===== INITIALISER COMMUNICATION HTTP =====
+    SERIAL_PRINTLN_MINIMAL("Init HTTP comm...");
+    IrrigCommConfig_t comm_config;
+    strcpy(comm_config.master_ip, "192.168.1.100");
+    comm_config.master_port = 8080;
+    strcpy(comm_config.slave1_ip, "192.168.1.101");
+    comm_config.slave1_port = 8081;
+    strcpy(comm_config.slave2_ip, "192.168.1.102");
+    comm_config.slave2_port = 8082;
+    comm_config.http_timeout_ms = 5000;
+    comm_config.retry_count = 3;
+    comm_config.retry_delay_ms = 1000;
+    irrig_comm_init(&comm_config);
+    SERIAL_PRINTLN_MINIMAL("HTTP comm OK");
+
+    // ===== ENREGISTRER LES 3 APPS =====
+    SERIAL_PRINTLN_MINIMAL("Registering apps...");
+
+    // 1. Master App (ID: 1)
+    IrrigAppConfig_t irrig_config;
+    
+    // Utiliser l'URL configurée via CLI, sinon valeur par défaut
+    const char* configured_url = irrig_cli_get_server_url();
+    if (configured_url != NULL && strlen(configured_url) > 0) {
+        strcpy(irrig_config.server_url, configured_url);
+        kernel_log(LOG_LEVEL_INFO, "Using configured server URL: %s", configured_url);
+    } else {
+        strcpy(irrig_config.server_url, "http://10.232.133.53:3000");
+        kernel_log(LOG_LEVEL_WARN, "Using default server URL (not configured)");
+    }
+    
+    strcpy(irrig_config.device_id, "ESP32_IRRIGATION_11100454456464674");
+    strcpy(irrig_config.device_secret, "esp32-secure-key-2024");
+    irrig_config.poll_interval_seconds = 10;
+    irrig_config.sensor_read_interval_seconds = 5;
+    irrig_config.data_send_interval_seconds = 15;
+    irrig_config.max_zones = 4;
+    irrig_config.max_sensors = 12;
+    irrig_config.simulation_mode = true;
+
+    SysError_t irrig_result = register_irrig_app_master(&irrig_config);
+    if (irrig_result == SYS_OK) {
+        g_master_app_id = 1;
+        SERIAL_PRINTLN_MINIMAL("✓ Master (ID:1)");
+        kernel_log(LOG_LEVEL_INFO, "Master app registered (ID: 1)");
+    } else {
+        SERIAL_PRINTLN_MINIMAL("✗ Master fail");
+        kernel_log(LOG_LEVEL_ERROR, "Failed to register Master app");
+    }
+
+    // Initialiser serveur HTTP du Master
+    master_http_init(8080);
+    master_http_set_sensor_callback(on_sensor_data_received);
+    master_http_set_status_callback(on_irrigation_status_received);
+
+    // 2. Slave Sensors App (ID: 2)
+    IrrigSensorConfig_t sensor_config = {
+        .simulation_mode = false,
+        .read_interval_ms = 5000,
+        .samples_per_read = 5,
+        .enable_http_server = true,
+        .http_server_port = 8081
+    };
+
+    SysError_t sensor_result = register_irrig_app_slave_sensors(&sensor_config);
+    if (sensor_result == SYS_OK) {
+        g_slave1_app_id = 2;
+        SERIAL_PRINTLN_MINIMAL("✓ Slave1 (ID:2)");
+        kernel_log(LOG_LEVEL_INFO, "Slave Sensors app registered (ID: 2)");
+    } else {
+        SERIAL_PRINTLN_MINIMAL("✗ Slave1 fail");
+        kernel_log(LOG_LEVEL_ERROR, "Failed to register Slave Sensors app");
+    }
+
+    // 3. Slave Relays App (ID: 3)
+    IrrigRelayConfig_t relay_config = {
+        .safety_timeout_ms = 3600000,  // 1 heure en millisecondes
+        .enable_http_server = true,
+        .http_server_port = 8082,
+        .status_publish_interval_ms = 10000
+    };
+
+    SysError_t relay_result = register_irrig_app_slave_relays(&relay_config);
+    if (relay_result == SYS_OK) {
+        g_slave2_app_id = 3;
+        SERIAL_PRINTLN_MINIMAL("✓ Slave2 (ID:3)");
+        kernel_log(LOG_LEVEL_INFO, "Slave Relays app registered (ID: 3)");
+    } else {
+        SERIAL_PRINTLN_MINIMAL("✗ Slave2 fail");
+        kernel_log(LOG_LEVEL_ERROR, "Failed to register Slave Relays app");
+    }
+
+    // Enregistrer les IDs dans le système CLI
+    irrig_cli_set_app_ids(g_master_app_id, g_slave1_app_id, g_slave2_app_id);
+    SERIAL_PRINTLN_MINIMAL("Apps registered");
 
     // Synchronisation initiale du temps (gère automatiquement NTP → RTC → System)
     SERIAL_PRINTLN_MINIMAL("Initial time sync...");
@@ -688,12 +810,44 @@ void setup() {
     // Afficher le logo système
     display_system_logo();
 
+    // Afficher les apps enregistrées
+    Serial.println();
+    Serial.println("📋 Registered Apps:");
+    Serial.println("  ID 1: IrrigAppMaster");
+    Serial.println("  ID 2: IrrigAppSlaveSensors");
+    Serial.println("  ID 3: IrrigAppSlaveRelays");
+    Serial.println();
+    Serial.println("🎯 Configure device role:");
+    Serial.println("  irrig_set_role <master|slave1|slave2>");
+    Serial.println("  irrig_activate_role");
+    Serial.println("  irrig_config_save");
+    Serial.println();
+
+    // Activer automatiquement le rôle si configuré
+    DeviceRole_t role = irrig_cli_get_device_role();
+    if (role != DEVICE_ROLE_NONE) {
+        const char* role_name = (role == DEVICE_ROLE_MASTER) ? "MASTER" :
+                               (role == DEVICE_ROLE_SLAVE1) ? "SLAVE1" :
+                               (role == DEVICE_ROLE_SLAVE2) ? "SLAVE2" : "UNKNOWN";
+        Serial.printf("🚀 Auto-activating role: %s\n", role_name);
+        kernel_log(LOG_LEVEL_INFO, "Auto-activating role: %s", role_name);
+        irrig_cli_auto_activate_role();
+    } else {
+        Serial.println("⚠️  No role configured");
+        Serial.println("   Use 'irrig_set_role' to configure");
+        kernel_log(LOG_LEVEL_WARN, "No device role configured");
+    }
+    Serial.println();
+
     // Démarrer le shell
     interface_start();
 }
 
 void loop() {
     // Boucle principale du système
+
+    // Gérer requêtes HTTP du Master (toujours actif pour recevoir données)
+    master_http_handle_requests();
 
     // Boucle Application Manager
     app_manager_loop();

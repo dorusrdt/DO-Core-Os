@@ -10,8 +10,8 @@
 
 // Structure d'une commande
 typedef struct {
-    char name[16];
-    char description[32];
+    char name[32];  // Augmenté de 16 à 32 pour les commandes longues (ex: irrig_config_server)
+    char description[64];  // Augmenté de 32 à 64 pour descriptions plus longues
     SysError_t (*handler)(int argc, char* argv[]);
 } Command_t;
 
@@ -96,6 +96,21 @@ SysError_t cmd_time_status(int argc, char* argv[]);
 SysError_t cmd_time_source(int argc, char* argv[]);
 SysError_t cmd_time_sync(int argc, char* argv[]);
 SysError_t cmd_time_sources(int argc, char* argv[]);
+
+// Commandes Irrigation Configuration
+SysError_t cmd_irrig_config_server(int argc, char* argv[]);
+SysError_t cmd_irrig_config_master(int argc, char* argv[]);
+SysError_t cmd_irrig_config_slave1(int argc, char* argv[]);
+SysError_t cmd_irrig_config_slave2(int argc, char* argv[]);
+SysError_t cmd_irrig_config_show(int argc, char* argv[]);
+SysError_t cmd_irrig_config_save(int argc, char* argv[]);
+SysError_t cmd_irrig_config_load(int argc, char* argv[]);
+SysError_t cmd_irrig_config_reset(int argc, char* argv[]);
+
+// Commandes Irrigation Role Management
+SysError_t cmd_irrig_set_role(int argc, char* argv[]);
+SysError_t cmd_irrig_get_role(int argc, char* argv[]);
+SysError_t cmd_irrig_activate_role(int argc, char* argv[]);
 
 // Reserved for future commands
 

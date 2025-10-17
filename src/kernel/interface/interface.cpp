@@ -10,6 +10,7 @@
 #include "../app/app_manager.h"
 #include "../hal/rtc_manager.h"
 #include "../hal/time_sync_manager.h"
+#include "../../apps/irrig_common/irrig_cli_commands.h"
 #include <string.h>
 
 
@@ -32,6 +33,8 @@ extern SysError_t cmd_ota_status(int argc, char* argv[]);
 extern SysError_t cmd_ota_info(int argc, char* argv[]);
 extern SysError_t cmd_ota_stats(int argc, char* argv[]);
 extern SysError_t cmd_ota_url(int argc, char* argv[]);
+
+// Commandes Irrigation : incluses via irrig_cli_commands.h
 
 // Déclarations des fonctions de commandes
 SysError_t cmd_network_test(int argc, char* argv[]);
@@ -233,6 +236,21 @@ SysError_t interface_init(void) {
     add_command("ota_info", "Show firmware version info", cmd_ota_info);
     add_command("ota_stats", "Show OTA statistics", cmd_ota_stats);
     add_command("ota_url", "Show OTA update URL", cmd_ota_url);
+
+    // Commandes Irrigation Configuration
+    add_command("irrig_config_server", "Configure FastAPI server URL", cmd_irrig_config_server);
+    add_command("irrig_config_master", "Configure Master device IP/port", cmd_irrig_config_master);
+    add_command("irrig_config_slave1", "Configure Slave1 (Sensors) IP/port", cmd_irrig_config_slave1);
+    add_command("irrig_config_slave2", "Configure Slave2 (Relays) IP/port", cmd_irrig_config_slave2);
+    add_command("irrig_config_show", "Show current configuration", cmd_irrig_config_show);
+    add_command("irrig_config_save", "Save configuration to NVS", cmd_irrig_config_save);
+    add_command("irrig_config_load", "Load configuration from NVS", cmd_irrig_config_load);
+    add_command("irrig_config_reset", "Reset configuration to defaults", cmd_irrig_config_reset);
+    
+    // Commandes Irrigation Role Management
+    add_command("irrig_set_role", "Set device role (master/slave1/slave2)", cmd_irrig_set_role);
+    add_command("irrig_get_role", "Show current device role", cmd_irrig_get_role);
+    add_command("irrig_activate_role", "Activate app for configured role", cmd_irrig_activate_role);
 
     Serial.printf("Interface initialized with %d/%d commands\n", command_count, MAX_COMMANDS);
 

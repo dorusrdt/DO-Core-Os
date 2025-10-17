@@ -1,4 +1,6 @@
 #include "irrig_app_master.h"
+#include "irrig_app_master_http.h"
+#include "../irrig_common/irrig_communication.h"
 #include "../../kernel/core/log_system_optimized.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -130,11 +132,8 @@ void irrig_app_master_loop(void) {
         lastConfigPoll = currentTime;
     }
     
-    // Lire capteurs toutes les 5 secondes
-    if (currentTime - lastSensorRead >= (app_config.sensor_read_interval_seconds * 1000)) {
-        readAllSensors();
-        lastSensorRead = currentTime;
-    }
+    // Les capteurs sont lus automatiquement par Slave1 et reçus via HTTP
+    // Pas besoin de readAllSensors() ici
     
     // Envoyer données toutes les 15 secondes
     if (currentTime - lastDataSend >= (app_config.data_send_interval_seconds * 1000)) {
@@ -158,13 +157,20 @@ void irrig_app_master_loop(void) {
 void irrig_app_master_stop(void) {
     kernel_log(LOG_LEVEL_INFO, "IrrigAppMaster: Stopping irrigation system...");
     
-    // Arrêter irrigation en cours
+    // Envoyer arrêt d'urgence à Slave2
     if (isIrrigating) {
+        IrrigationCommandPacket_t cmd;
+        cmd.command = CMD_EMERGENCY_STOP;
+        cmd.zone_id = 0;
+        cmd.duration_seconds = 0;
+        cmd.zone_server_id[0] = '\0';
+        cmd.timestamp = millis();
+        
+        irrig_comm_send_irrigation_command(&cmd);
+        
         isIrrigating = false;
         activeIrrigationTimer = 0;
-        digitalWrite(PUMP_RELAY_PIN, LOW);
-        pumpRunning = false;
-        kernel_log(LOG_LEVEL_INFO, "Emergency stop: irrigation halted");
+        kernel_log(LOG_LEVEL_INFO, "Emergency stop sent to Slave2");
     }
     
     kernel_log(LOG_LEVEL_INFO, "IrrigAppMaster: Cleanup completed");
@@ -243,24 +249,10 @@ void initializeHardware(void) {
 }
 
 void initializeRealHardware(void) {
-    // Initialiser pins relais en sorties
-    pinMode(ZONE_1_RELAY_PIN, OUTPUT);
-    pinMode(ZONE_2_RELAY_PIN, OUTPUT);
-    pinMode(ZONE_3_RELAY_PIN, OUTPUT);
-    pinMode(ZONE_4_RELAY_PIN, OUTPUT);
-    pinMode(PUMP_RELAY_PIN, OUTPUT);
-    
-    // Tous les relais OFF au démarrage
-    digitalWrite(ZONE_1_RELAY_PIN, LOW);
-    digitalWrite(ZONE_2_RELAY_PIN, LOW);
-    digitalWrite(ZONE_3_RELAY_PIN, LOW);
-    digitalWrite(ZONE_4_RELAY_PIN, LOW);
-    digitalWrite(PUMP_RELAY_PIN, LOW);
-    
-    kernel_log(LOG_LEVEL_INFO, "Real hardware pins initialized");
-    kernel_log(LOG_LEVEL_INFO, "Zone relays: %d, %d, %d, %d", 
-               ZONE_1_RELAY_PIN, ZONE_2_RELAY_PIN, ZONE_3_RELAY_PIN, ZONE_4_RELAY_PIN);
-    kernel_log(LOG_LEVEL_INFO, "Pump relay: %d", PUMP_RELAY_PIN);
+    // Hardware géré par Slaves, pas besoin d'initialiser ici
+    kernel_log(LOG_LEVEL_INFO, "Hardware managed by Slave devices");
+    kernel_log(LOG_LEVEL_INFO, "  Slave1: 12 moisture sensors (ADC)");
+    kernel_log(LOG_LEVEL_INFO, "  Slave2: 4 zone relays + pump relay");
 }
 
 void initializeSimulatedSensors(void) {
@@ -573,18 +565,24 @@ void handleZoneDeletion(String zoneId) {
     }
 }
 
-// ===== GESTION CAPTEURS =====
+// ===== GESTION CAPTEURS (Reçus de Slave1 via HTTP) =====
 
-void readAllSensors(void) {
-    #ifdef USE_REAL_SENSORS
-        readRealSensors();
-    #else
-        updateSimulatedSensors();
-    #endif
+void updateSensorDataFromSlave(float moisture[MAX_SENSORS], float temp, float hum, float press) {
+    // Mettre à jour données capteurs reçues de Slave1
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        simulatedMoisture[i] = moisture[i];
+    }
     
-    // Afficher lectures seulement pour capteurs assignés
+    // Mettre à jour données environnementales
+    globalTemperature = temp;
+    globalHumidity = hum;
+    globalPressure = press;
+    
+    // Afficher lectures pour capteurs assignés
     if (assignedZoneCount > 0) {
-        kernel_log(LOG_LEVEL_DEBUG, "Current sensor readings:");
+        kernel_log(LOG_LEVEL_DEBUG, "Sensor data received from Slave1:");
+        kernel_log(LOG_LEVEL_DEBUG, "  Environment: T=%.1f°C, H=%.1f%%, P=%.1fhPa", 
+                   globalTemperature, globalHumidity, globalPressure);
         
         for (int i = 0; i < 4; i++) {
             if (ZONE_STACK[i].configured) {
@@ -599,34 +597,6 @@ void readAllSensors(void) {
                 }
             }
         }
-    }
-}
-
-void updateSimulatedSensors(void) {
-    // Mettre à jour données environnementales globales
-    float tempVariation = (random(-100, 101) / 100.0);
-    float humidityVariation = (random(-250, 251) / 100.0);
-    float pressureVariation = (random(-500, 501) / 100.0);
-    
-    globalTemperature = constrain(globalTemperature + tempVariation, 15, 40);
-    globalHumidity = constrain(globalHumidity + humidityVariation, 30, 90);
-    globalPressure = constrain(globalPressure + pressureVariation, 990, 1030);
-    
-    // Générer lectures réalistes par capteur
-    for (int i = 0; i < MAX_SENSORS; i++) {
-        float baseValue = 30 + (i * 2);
-        float variation = (random(-500, 501) / 100.0);
-        
-        simulatedMoisture[i] = constrain(baseValue + variation, 15, 75);
-    }
-}
-
-void readRealSensors(void) {
-    // TODO: Implémenter lecture réelle GPIO ADC
-    kernel_log(LOG_LEVEL_WARN, "Real sensor reading not implemented yet");
-    
-    for (int i = 0; i < 12; i++) {
-        simulatedMoisture[i] = 50.0f; // Valeur fixe temporaire
     }
 }
 
@@ -719,7 +689,7 @@ void checkIrrigationSchedule(void) {
     for (int i = 0; i < 4; i++) {
         if (ZONE_STACK[i].configured && ZONE_STACK[i].irrigationTime.equals(String(currentTime))) {
             kernel_log(LOG_LEVEL_INFO, "Scheduled irrigation for zone %d", ZONE_STACK[i].id);
-            executeIrrigation(ZONE_STACK[i].zoneId, ZONE_STACK[i].waterPerDay / 10);
+            sendIrrigationCommand(ZONE_STACK[i].zoneId, ZONE_STACK[i].waterPerDay / 10);
         }
     }
 }
@@ -747,13 +717,13 @@ void checkMoistureThresholds(void) {
                            ZONE_STACK[i].id, avgMoisture, ZONE_STACK[i].humidityThreshold);
                 
                 // Irrigation d'urgence
-                executeIrrigation(ZONE_STACK[i].zoneId, 60); // 1 minute
+                sendIrrigationCommand(ZONE_STACK[i].zoneId, 60); // 1 minute
             }
         }
     }
 }
 
-void executeIrrigation(String zoneId, int durationSeconds) {
+void sendIrrigationCommand(String zoneId, int durationSeconds) {
     // Trouver le slot de zone
     ZoneSlot* zoneSlot = nullptr;
     for (int i = 0; i < 4; i++) {
@@ -773,27 +743,34 @@ void executeIrrigation(String zoneId, int durationSeconds) {
         return;
     }
     
-    kernel_log(LOG_LEVEL_INFO, "Starting irrigation for zone %s", zoneId.c_str());
-    kernel_log(LOG_LEVEL_INFO, "Pump: ON - Duration: %ds", durationSeconds);
-    isIrrigating = true;
+    kernel_log(LOG_LEVEL_INFO, "Sending irrigation command to Slave2: zone %s, duration %ds", 
+               zoneId.c_str(), durationSeconds);
     
-    // Activer pompe
-    digitalWrite(PUMP_RELAY_PIN, HIGH);
-    pumpRunning = true;
+    // Créer commande pour Slave2
+    IrrigationCommandPacket_t cmd;
+    cmd.command = CMD_START_IRRIGATION;
+    cmd.zone_id = zoneSlot->id;
+    cmd.duration_seconds = durationSeconds;
+    strncpy(cmd.zone_server_id, zoneId.c_str(), 63);
+    cmd.zone_server_id[63] = '\0';
+    cmd.timestamp = millis();
     
-    // Définir timer
-    activeIrrigationTimer = millis() + (durationSeconds * 1000);
+    // Envoyer commande via HTTP
+    if (irrig_comm_send_irrigation_command(&cmd)) {
+        kernel_log(LOG_LEVEL_INFO, "Irrigation command sent successfully");
+        isIrrigating = true;
+        activeIrrigationTimer = millis() + (durationSeconds * 1000);
+    } else {
+        kernel_log(LOG_LEVEL_ERROR, "Failed to send irrigation command to Slave2");
+    }
 }
 
 void checkIrrigationTimer(void) {
     if (isIrrigating && activeIrrigationTimer > 0 && millis() >= activeIrrigationTimer) {
-        // Arrêter irrigation
+        // Timer expiré, irrigation devrait être terminée
         isIrrigating = false;
         activeIrrigationTimer = 0;
-        digitalWrite(PUMP_RELAY_PIN, LOW);
-        pumpRunning = false;
-        kernel_log(LOG_LEVEL_INFO, "Irrigation completed");
-        kernel_log(LOG_LEVEL_INFO, "Pump: OFF");
+        kernel_log(LOG_LEVEL_INFO, "Irrigation timer expired");
     }
 }
 
