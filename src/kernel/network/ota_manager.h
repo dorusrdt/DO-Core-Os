@@ -7,7 +7,7 @@
 #include <ElegantOTA.h>
 
 // Configuration OTA
-#define OTA_MANAGER_DEFAULT_PORT 8080
+#define OTA_MANAGER_DEFAULT_PORT 3232  // Port OTA (différent du Master HTTP 8080)
 #define OTA_MANAGER_DEFAULT_PATH "/update"
 #define OTA_MANAGER_USERNAME_MAX_LENGTH 32
 #define OTA_MANAGER_PASSWORD_MAX_LENGTH 64
