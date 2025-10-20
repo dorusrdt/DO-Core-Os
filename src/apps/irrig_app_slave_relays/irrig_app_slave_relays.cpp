@@ -25,6 +25,7 @@ static uint32_t total_commands = 0;
 static uint32_t total_irrigations = 0;
 static uint32_t total_irrigation_seconds = 0;
 static unsigned long last_status_publish = 0;
+static unsigned long last_loop_debug = 0;  // Pour debug
 
 // ===== CALLBACKS DO-CORE =====
 
@@ -59,11 +60,25 @@ void irrig_app_slave_relays_start(void) {
         kernel_log(LOG_LEVEL_WARN, "WiFi not connected");
     }
     
+    // Afficher la configuration de communication
+    kernel_log(LOG_LEVEL_INFO, "Status publish interval: %d ms", app_config.status_publish_interval_ms);
+    kernel_log(LOG_LEVEL_INFO, "Will send status to Master (check irrig_config_show for Master IP)");
+    
+    // Réinitialiser le timer pour forcer un envoi rapide
+    last_status_publish = 0;
+    kernel_log(LOG_LEVEL_INFO, "Status timer reset - first publish in %dms", app_config.status_publish_interval_ms);
+    
     kernel_log(LOG_LEVEL_INFO, "IrrigSlaveRelays: Ready");
 }
 
 void irrig_app_slave_relays_loop(void) {
     unsigned long current_time = millis();
+    
+    // Debug: Log toutes les 30 secondes pour confirmer que la loop tourne
+    if (current_time - last_loop_debug >= 30000) {
+        kernel_log(LOG_LEVEL_INFO, "🔄 Slave2 loop running (uptime: %lus)", current_time / 1000);
+        last_loop_debug = current_time;
+    }
     
     // Gérer requêtes HTTP
     if (app_config.enable_http_server && http_server) {
@@ -77,11 +92,16 @@ void irrig_app_slave_relays_loop(void) {
     if (app_config.status_publish_interval_ms > 0 && 
         current_time - last_status_publish >= app_config.status_publish_interval_ms) {
         
+        kernel_log(LOG_LEVEL_INFO, "📤 Slave2: Publishing status (interval: %dms, elapsed: %lums)",
+                   app_config.status_publish_interval_ms, current_time - last_status_publish);
+        
         IrrigationStatusPacket_t status;
         relays_get_status(&status);
         
         if (irrig_comm_publish_irrigation_status(&status)) {
-            kernel_log(LOG_LEVEL_DEBUG, "IrrigSlaveRelays: Status published");
+            kernel_log(LOG_LEVEL_INFO, "✅ Slave2: Status published successfully");
+        } else {
+            kernel_log(LOG_LEVEL_ERROR, "❌ Slave2: Failed to publish status");
         }
         
         last_status_publish = current_time;
@@ -203,55 +223,74 @@ void relays_execute_command(IrrigationCommandPacket_t* cmd) {
 }
 
 void relays_start_irrigation(uint8_t zone_id, uint16_t duration_seconds) {
-    if (zone_id < 1 || zone_id > MAX_ZONES) {
-        kernel_log(LOG_LEVEL_ERROR, "Invalid zone ID: %d", zone_id);
+    kernel_log(LOG_LEVEL_INFO, "💧 Slave2: STARTING IRRIGATION");
+    kernel_log(LOG_LEVEL_INFO, "   Zone ID (received): %d", zone_id);
+    kernel_log(LOG_LEVEL_INFO, "   Duration: %ds", duration_seconds);
+    
+    // ✅ CONVERSION : Format 0-3 → 1-4
+    uint8_t physical_zone = zone_id + 1;
+    kernel_log(LOG_LEVEL_INFO, "   Physical zone: %d", physical_zone);
+    
+    // ✅ VALIDATION APRÈS CONVERSION
+    if (physical_zone < 1 || physical_zone > MAX_ZONES) {
+        kernel_log(LOG_LEVEL_ERROR, "❌ Slave2: Invalid physical zone: %d (must be 1-4)", physical_zone);
         return;
     }
     
     if (is_irrigating) {
-        kernel_log(LOG_LEVEL_WARN, "Irrigation already in progress for zone %d", active_zone_id);
+        kernel_log(LOG_LEVEL_WARN, "⚠️  Slave2: Irrigation already in progress for zone %d", active_zone_id);
         return;
     }
     
     // Vérifier timeout sécurité
     if (duration_seconds * 1000 > app_config.safety_timeout_ms) {
-        kernel_log(LOG_LEVEL_WARN, "Duration %ds exceeds safety timeout, capping to %lus", 
+        kernel_log(LOG_LEVEL_WARN, "⚠️  Slave2: Duration %ds exceeds safety timeout, capping to %lus", 
                    duration_seconds, app_config.safety_timeout_ms / 1000);
         duration_seconds = app_config.safety_timeout_ms / 1000;
     }
     
-    kernel_log(LOG_LEVEL_INFO, "Starting irrigation: Zone %d, Duration %ds", zone_id, duration_seconds);
-    
-    // Activer zone
-    relays_set_zone(zone_id, true);
+    // Activer zone (utiliser physical_zone)
+    kernel_log(LOG_LEVEL_INFO, "🔌 Slave2: Activating zone %d relay (GPIO %d)", physical_zone, 
+               physical_zone == 1 ? ZONE_1_RELAY_PIN : physical_zone == 2 ? ZONE_2_RELAY_PIN : 
+               physical_zone == 3 ? ZONE_3_RELAY_PIN : ZONE_4_RELAY_PIN);
+    relays_set_zone(physical_zone, true);
     
     // Activer pompe
+    kernel_log(LOG_LEVEL_INFO, "🔌 Slave2: Activating pump (GPIO %d)", PUMP_RELAY_PIN);
     relays_set_pump(true);
     
     // LED status ON
     digitalWrite(STATUS_LED_PIN, HIGH);
     
-    // Définir état
+    // Définir état (utiliser physical_zone)
     is_irrigating = true;
-    active_zone_id = zone_id;
+    active_zone_id = physical_zone;
     irrigation_end_time = millis() + (duration_seconds * 1000);
     
     total_irrigations++;
     total_irrigation_seconds += duration_seconds;
+    
+    kernel_log(LOG_LEVEL_INFO, "✅ Slave2: Irrigation started successfully!");
+    kernel_log(LOG_LEVEL_INFO, "   Active zone: %d", active_zone_id);
+    kernel_log(LOG_LEVEL_INFO, "   End time: %lus (in %ds)", irrigation_end_time / 1000, duration_seconds);
+    kernel_log(LOG_LEVEL_INFO, "   Total irrigations: %lu", total_irrigations);
 }
 
 void relays_stop_irrigation(void) {
     if (!is_irrigating) {
-        kernel_log(LOG_LEVEL_DEBUG, "No irrigation in progress");
+        kernel_log(LOG_LEVEL_DEBUG, "Slave2: No irrigation in progress");
         return;
     }
     
-    kernel_log(LOG_LEVEL_INFO, "Stopping irrigation for zone %d", active_zone_id);
+    kernel_log(LOG_LEVEL_INFO, "🛑 Slave2: STOPPING IRRIGATION");
+    kernel_log(LOG_LEVEL_INFO, "   Zone: %d", active_zone_id);
     
     // Désactiver zone active
+    kernel_log(LOG_LEVEL_INFO, "🔌 Slave2: Deactivating zone %d relay", active_zone_id);
     relays_set_zone(active_zone_id, false);
     
     // Désactiver pompe
+    kernel_log(LOG_LEVEL_INFO, "🔌 Slave2: Deactivating pump");
     relays_set_pump(false);
     
     // LED status OFF
@@ -261,6 +300,8 @@ void relays_stop_irrigation(void) {
     is_irrigating = false;
     active_zone_id = 0;
     irrigation_end_time = 0;
+    
+    kernel_log(LOG_LEVEL_INFO, "✅ Slave2: Irrigation stopped successfully");
 }
 
 void relays_emergency_stop(void) {
@@ -286,7 +327,8 @@ void relays_check_irrigation_timer(void) {
     if (!is_irrigating) return;
     
     if (millis() >= irrigation_end_time) {
-        kernel_log(LOG_LEVEL_INFO, "Irrigation timer expired");
+        kernel_log(LOG_LEVEL_INFO, "⏱️  Slave2: Irrigation timer EXPIRED");
+        kernel_log(LOG_LEVEL_INFO, "   Zone %d irrigation complete", active_zone_id);
         relays_stop_irrigation();
     }
 }
@@ -368,17 +410,23 @@ void relays_start_http_server(void) {
     
     // Route POST /api/irrigation/command
     http_server->on("/api/irrigation/command", HTTP_POST, []() {
+        kernel_log(LOG_LEVEL_INFO, "📥 Slave2: Incoming POST /api/irrigation/command from %s",
+                   http_server->client().remoteIP().toString().c_str());
+        
         if (!http_server->hasArg("plain")) {
+            kernel_log(LOG_LEVEL_ERROR, "Slave2: Missing body");
             http_server->send(400, "text/plain", "Missing body");
             return;
         }
         
         String body = http_server->arg("plain");
+        kernel_log(LOG_LEVEL_DEBUG, "Slave2: Body: %s", body.c_str());
         
         DynamicJsonDocument doc(512);
         DeserializationError error = deserializeJson(doc, body);
         
         if (error) {
+            kernel_log(LOG_LEVEL_ERROR, "Slave2: Invalid JSON: %s", error.c_str());
             http_server->send(400, "text/plain", "Invalid JSON");
             return;
         }
@@ -386,6 +434,9 @@ void relays_start_http_server(void) {
         // Parser commande
         IrrigationCommandPacket_t cmd;
         String command_str = doc["command"].as<String>();
+        
+        kernel_log(LOG_LEVEL_INFO, "✅ Slave2: Received command '%s' for zone %d (duration: %ds)",
+                   command_str.c_str(), (int)doc["zone_id"], (int)doc["duration_seconds"]);
         
         if (command_str == "start_irrigation") {
             cmd.command = CMD_START_IRRIGATION;

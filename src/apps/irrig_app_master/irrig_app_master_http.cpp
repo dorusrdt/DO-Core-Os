@@ -25,7 +25,11 @@ SysError_t master_http_init(uint16_t port) {
     
     // Route POST /api/sensors/data (Slave 1 → Master)
     g_http_server->on("/api/sensors/data", HTTP_POST, []() {
+        kernel_log(LOG_LEVEL_INFO, "📥 MasterHTTP: Incoming POST /api/sensors/data from %s",
+                   g_http_server->client().remoteIP().toString().c_str());
+        
         if (!g_http_server->hasArg("plain")) {
+            kernel_log(LOG_LEVEL_ERROR, "MasterHTTP: Missing body");
             g_http_server->send(400, "text/plain", "Missing body");
             return;
         }
@@ -36,6 +40,7 @@ SysError_t master_http_init(uint16_t port) {
         DeserializationError error = deserializeJson(doc, body);
         
         if (error) {
+            kernel_log(LOG_LEVEL_ERROR, "MasterHTTP: Invalid JSON: %s", error.c_str());
             g_http_server->send(400, "text/plain", "Invalid JSON");
             return;
         }

@@ -29,10 +29,11 @@ static unsigned long lastDataSend = 0;
 static bool deviceRegistered = false;
 static bool deviceAssigned = false;
 
-// Données environnementales globales
+// ✅ Données environnementales globales (GÉNÉRÉES PAR MASTER)
 static float globalTemperature = 24.5;
 static float globalHumidity = 60.0;
 static float globalPressure = 1012.0;
+static float globalBatteryLevel = 85.0;
 
 // Simulation des capteurs
 static float simulatedMoisture[MAX_SENSORS];
@@ -59,7 +60,10 @@ SysError_t irrig_app_master_init(void) {
         ZONE_STACK[i].configured = false;
         ZONE_STACK[i].zoneId = "";
         ZONE_STACK[i].waterPerDay = 0;
-        ZONE_STACK[i].irrigationTime = "";
+        for (int s = 0; s < MAX_SCHEDULES_PER_ZONE; s++) {
+            ZONE_STACK[i].irrigationTimes[s] = "";
+        }
+        ZONE_STACK[i].scheduleCount = 0;
         ZONE_STACK[i].humidityThreshold = 0;
     }
     
@@ -426,11 +430,28 @@ void parseConfiguration(String jsonResponse) {
             if (existingSlot) {
                 // Mettre à jour config existante mais préserver capteurs
                 existingSlot->waterPerDay = zone["waterPerDay"];
-                existingSlot->irrigationTime = zone["irrigationTime"].as<String>();
                 existingSlot->humidityThreshold = zone["humidityThreshold"];
-                kernel_log(LOG_LEVEL_INFO, "  Water: %dml/day, Time: %s, Threshold: %d%% (updated)", 
-                           existingSlot->waterPerDay, existingSlot->irrigationTime.c_str(), 
-                           existingSlot->humidityThreshold);
+                
+                // Parser les créneaux d'irrigation (supporte String unique ou Array)
+                if (zone["irrigationTime"].is<String>()) {
+                    // Format ancien : "08:00"
+                    existingSlot->irrigationTimes[0] = zone["irrigationTime"].as<String>();
+                    existingSlot->scheduleCount = 1;
+                } else if (zone["irrigationTimes"].is<JsonArray>()) {
+                    // Format nouveau : ["08:00", "14:00", "18:00"]
+                    JsonArray times = zone["irrigationTimes"];
+                    existingSlot->scheduleCount = min((int)times.size(), MAX_SCHEDULES_PER_ZONE);
+                    for (int t = 0; t < existingSlot->scheduleCount; t++) {
+                        existingSlot->irrigationTimes[t] = times[t].as<String>();
+                    }
+                }
+                
+                kernel_log(LOG_LEVEL_INFO, "  Water: %dml/day, Schedules: %d, Threshold: %d%% (updated)", 
+                           existingSlot->waterPerDay, existingSlot->scheduleCount, existingSlot->humidityThreshold);
+                for (int t = 0; t < existingSlot->scheduleCount; t++) {
+                    kernel_log(LOG_LEVEL_INFO, "    Schedule %d/%d: %s", 
+                               t + 1, existingSlot->scheduleCount, existingSlot->irrigationTimes[t].c_str());
+                }
                 continue;
             }
             
@@ -447,8 +468,21 @@ void parseConfiguration(String jsonResponse) {
                 slot->configured = true;
                 slot->zoneId = zoneId;
                 slot->waterPerDay = zone["waterPerDay"];
-                slot->irrigationTime = zone["irrigationTime"].as<String>();
                 slot->humidityThreshold = zone["humidityThreshold"];
+                
+                // Parser les créneaux d'irrigation (supporte String unique ou Array)
+                if (zone["irrigationTime"].is<String>()) {
+                    // Format ancien : "08:00"
+                    slot->irrigationTimes[0] = zone["irrigationTime"].as<String>();
+                    slot->scheduleCount = 1;
+                } else if (zone["irrigationTimes"].is<JsonArray>()) {
+                    // Format nouveau : ["08:00", "14:00", "18:00"]
+                    JsonArray times = zone["irrigationTimes"];
+                    slot->scheduleCount = min((int)times.size(), MAX_SCHEDULES_PER_ZONE);
+                    for (int t = 0; t < slot->scheduleCount; t++) {
+                        slot->irrigationTimes[t] = times[t].as<String>();
+                    }
+                }
                 
                 // Assigner capteurs à cette zone
                 JsonArray sensors = zone["sensors"];
@@ -493,8 +527,12 @@ void parseConfiguration(String jsonResponse) {
                 assignedZones[assignedZoneCount++] = zoneId;
                 
                 kernel_log(LOG_LEVEL_INFO, "Zone %d: %s", slot->id, zoneId.c_str());
-                kernel_log(LOG_LEVEL_INFO, "  Water: %dml/day, Time: %s, Threshold: %d%%", 
-                           slot->waterPerDay, slot->irrigationTime.c_str(), slot->humidityThreshold);
+                kernel_log(LOG_LEVEL_INFO, "  Water: %dml/day, Schedules: %d, Threshold: %d%%", 
+                           slot->waterPerDay, slot->scheduleCount, slot->humidityThreshold);
+                for (int t = 0; t < slot->scheduleCount; t++) {
+                    kernel_log(LOG_LEVEL_INFO, "    Schedule %d/%d: %s", 
+                               t + 1, slot->scheduleCount, slot->irrigationTimes[t].c_str());
+                }
                 kernel_log(LOG_LEVEL_INFO, "  Sensors: %d", sensors.size());
             }
         }
@@ -540,7 +578,10 @@ void handleZoneDeletion(String zoneId) {
         zoneSlot->configured = false;
         zoneSlot->zoneId = "";
         zoneSlot->waterPerDay = 0;
-        zoneSlot->irrigationTime = "";
+        for (int s = 0; s < MAX_SCHEDULES_PER_ZONE; s++) {
+            zoneSlot->irrigationTimes[s] = "";
+        }
+        zoneSlot->scheduleCount = 0;
         zoneSlot->humidityThreshold = 0;
         kernel_log(LOG_LEVEL_INFO, "Zone %s removed from device", zoneId.c_str());
         
@@ -567,33 +608,59 @@ void handleZoneDeletion(String zoneId) {
 
 // ===== GESTION CAPTEURS (Reçus de Slave1 via HTTP) =====
 
+void updateGlobalEnvironmentData(void) {
+    // ✅ GÉNÉRER données environnementales avec variation réaliste (simulation)
+    float tempVariation = (random(-100, 101) / 100.0);      // ±1°C
+    float humidityVariation = (random(-250, 251) / 100.0);  // ±2.5%
+    float pressureVariation = (random(-500, 501) / 100.0);  // ±5 hPa
+    float batteryVariation = (random(-50, 51) / 100.0);     // ±0.5%
+    
+    globalTemperature = constrain(globalTemperature + tempVariation, 15.0, 40.0);
+    globalHumidity = constrain(globalHumidity + humidityVariation, 30.0, 90.0);
+    globalPressure = constrain(globalPressure + pressureVariation, 990.0, 1030.0);
+    globalBatteryLevel = constrain(globalBatteryLevel + batteryVariation, 70.0, 100.0);
+    
+    kernel_log(LOG_LEVEL_DEBUG, "Master: Generated environment data - T=%.1f°C, H=%.1f%%, P=%.1fhPa, Bat=%.1f%%",
+               globalTemperature, globalHumidity, globalPressure, globalBatteryLevel);
+}
+
 void updateSensorDataFromSlave(float moisture[MAX_SENSORS], float temp, float hum, float press) {
-    // Mettre à jour données capteurs reçues de Slave1
+    // ✅ Mettre à jour UNIQUEMENT données d'humidité reçues de Slave1
     for (int i = 0; i < MAX_SENSORS; i++) {
         simulatedMoisture[i] = moisture[i];
     }
     
-    // Mettre à jour données environnementales
-    globalTemperature = temp;
-    globalHumidity = hum;
-    globalPressure = press;
+    // ✅ GÉNÉRER données environnementales localement (simulation)
+    updateGlobalEnvironmentData();
     
-    // Afficher lectures pour capteurs assignés
+    // Afficher résumé des données
+    kernel_log(LOG_LEVEL_INFO, "📊 Master: Data updated");
+    kernel_log(LOG_LEVEL_INFO, "   Moisture: %d sensors from Slave1", MAX_SENSORS);
+    kernel_log(LOG_LEVEL_INFO, "   Environment: T=%.1f°C, H=%.1f%%, P=%.1fhPa, Bat=%.1f%%", 
+               globalTemperature, globalHumidity, globalPressure, globalBatteryLevel);
+    kernel_log(LOG_LEVEL_INFO, "   WiFi RSSI: %d dBm (Master)", WiFi.RSSI());
+    
+    // Afficher détails par zone (DEBUG uniquement)
     if (assignedZoneCount > 0) {
-        kernel_log(LOG_LEVEL_DEBUG, "Sensor data received from Slave1:");
-        kernel_log(LOG_LEVEL_DEBUG, "  Environment: T=%.1f°C, H=%.1f%%, P=%.1fhPa", 
-                   globalTemperature, globalHumidity, globalPressure);
-        
         for (int i = 0; i < 4; i++) {
             if (ZONE_STACK[i].configured) {
                 int sensorCount = 0;
+                float avgMoisture = 0.0;
+                
                 for (int s = 0; s < 12; s++) {
                     if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
                         sensorCount++;
-                        kernel_log(LOG_LEVEL_DEBUG, "  Zone %d, Sensor %d (%s): %.1f%% moisture", 
+                        avgMoisture += simulatedMoisture[s];
+                        kernel_log(LOG_LEVEL_DEBUG, "  Zone %d, Sensor %d (%s): %.1f%%", 
                                    ZONE_STACK[i].id, sensorCount, SENSOR_STACK[s].id.c_str(), 
                                    simulatedMoisture[s]);
                     }
+                }
+                
+                if (sensorCount > 0) {
+                    avgMoisture /= sensorCount;
+                    kernel_log(LOG_LEVEL_INFO, "   Zone %d (%s): %.1f%% avg (%d sensors)", 
+                               ZONE_STACK[i].id, ZONE_STACK[i].zoneId.c_str(), avgMoisture, sensorCount);
                 }
             }
         }
@@ -617,13 +684,13 @@ void sendSensorData(void) {
     doc["deviceId"] = app_config.device_id;
     doc["timestamp"] = getTimestamp();
     
-    // Données environnementales globales
+    // ✅ Données environnementales globales (GÉNÉRÉES PAR MASTER)
     JsonObject globalData = doc.createNestedObject("globalData");
-    globalData["temperature"] = globalTemperature;
-    globalData["humidity"] = globalHumidity;
-    globalData["pressure"] = globalPressure;
-    globalData["batteryLevel"] = 85.0 + random(-10, 16);
-    globalData["signalStrength"] = WiFi.RSSI();
+    globalData["temperature"] = globalTemperature;      // Simulé
+    globalData["humidity"] = globalHumidity;            // Simulé
+    globalData["pressure"] = globalPressure;            // Simulé
+    globalData["batteryLevel"] = globalBatteryLevel;    // Simulé
+    globalData["signalStrength"] = WiFi.RSSI();         // ✅ RÉEL
     
     // Données par zone
     JsonArray zonesArray = doc.createNestedArray("zonesData");
@@ -680,16 +747,49 @@ void checkIrrigationSchedule(void) {
     // Obtenir heure actuelle (NTP géré par DO-Core)
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) {
+        kernel_log(LOG_LEVEL_DEBUG, "⏰ Master: Cannot get local time for schedule check");
         return;
     }
+    
+    // ✅ FLAG ANTI-SPAM : Vérifier seulement au changement de minute
+    static uint8_t last_checked_minute = 255;
+    if (timeinfo.tm_min == last_checked_minute) {
+        return;  // Déjà vérifié cette minute
+    }
+    last_checked_minute = timeinfo.tm_min;
     
     char currentTime[6];
     strftime(currentTime, sizeof(currentTime), "%H:%M", &timeinfo);
     
+    kernel_log(LOG_LEVEL_DEBUG, "⏰ Master: Checking irrigation schedule (current time: %s)", currentTime);
+    
+    // Parcourir toutes les zones configurées
     for (int i = 0; i < 4; i++) {
-        if (ZONE_STACK[i].configured && ZONE_STACK[i].irrigationTime.equals(String(currentTime))) {
-            kernel_log(LOG_LEVEL_INFO, "Scheduled irrigation for zone %d", ZONE_STACK[i].id);
+        if (!ZONE_STACK[i].configured) continue;
+        
+        // Vérifier chaque créneau de cette zone
+        bool matchFound = false;
+        int matchedSchedule = -1;
+        
+        for (int s = 0; s < ZONE_STACK[i].scheduleCount; s++) {
+            if (ZONE_STACK[i].irrigationTimes[s].equals(String(currentTime))) {
+                matchFound = true;
+                matchedSchedule = s;
+                break;
+            }
+        }
+        
+        if (matchFound) {
+            kernel_log(LOG_LEVEL_INFO, "🎯 Master: SCHEDULED IRRIGATION TRIGGERED!");
+            kernel_log(LOG_LEVEL_INFO, "   Zone: %s (slot %d)", ZONE_STACK[i].zoneId.c_str(), ZONE_STACK[i].id);
+            kernel_log(LOG_LEVEL_INFO, "   Schedule: %d/%d at %s (MATCH!)", 
+                       matchedSchedule + 1, ZONE_STACK[i].scheduleCount, currentTime);
+            kernel_log(LOG_LEVEL_INFO, "   Duration: %ds (based on %dml/day)", 
+                       ZONE_STACK[i].waterPerDay / 10, ZONE_STACK[i].waterPerDay);
             sendIrrigationCommand(ZONE_STACK[i].zoneId, ZONE_STACK[i].waterPerDay / 10);
+        } else {
+            kernel_log(LOG_LEVEL_DEBUG, "   Zone %s: %d schedules, current=%s (no match)",
+                       ZONE_STACK[i].zoneId.c_str(), ZONE_STACK[i].scheduleCount, currentTime);
         }
     }
 }
@@ -724,53 +824,63 @@ void checkMoistureThresholds(void) {
 }
 
 void sendIrrigationCommand(String zoneId, int durationSeconds) {
+    kernel_log(LOG_LEVEL_INFO, "📤 Master: Preparing irrigation command...");
+    kernel_log(LOG_LEVEL_INFO, "   Target zone: %s", zoneId.c_str());
+    kernel_log(LOG_LEVEL_INFO, "   Duration: %ds", durationSeconds);
+    
     // Trouver le slot de zone
     ZoneSlot* zoneSlot = nullptr;
     for (int i = 0; i < 4; i++) {
         if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
             zoneSlot = &ZONE_STACK[i];
+            kernel_log(LOG_LEVEL_INFO, "   Found in slot %d (physical zone %d)", i, zoneSlot->id);
             break;
         }
     }
     
     if (!zoneSlot) {
-        kernel_log(LOG_LEVEL_WARN, "Zone %s not found or not configured", zoneId.c_str());
+        kernel_log(LOG_LEVEL_ERROR, "❌ Master: Zone %s not found or not configured", zoneId.c_str());
         return;
     }
     
     if (isIrrigating) {
-        kernel_log(LOG_LEVEL_WARN, "Irrigation already in progress, queuing command");
+        kernel_log(LOG_LEVEL_WARN, "⚠️  Master: Irrigation already in progress, command rejected");
         return;
     }
-    
-    kernel_log(LOG_LEVEL_INFO, "Sending irrigation command to Slave2: zone %s, duration %ds", 
-               zoneId.c_str(), durationSeconds);
     
     // Créer commande pour Slave2
     IrrigationCommandPacket_t cmd;
     cmd.command = CMD_START_IRRIGATION;
-    cmd.zone_id = zoneSlot->id;
+    cmd.zone_id = zoneSlot->id - 1;  // Convertir 1-4 vers 0-3
     cmd.duration_seconds = durationSeconds;
     strncpy(cmd.zone_server_id, zoneId.c_str(), 63);
     cmd.zone_server_id[63] = '\0';
     cmd.timestamp = millis();
     
+    kernel_log(LOG_LEVEL_INFO, "📤 Master → Slave2: Sending irrigation command");
+    kernel_log(LOG_LEVEL_INFO, "   Command: START_IRRIGATION");
+    kernel_log(LOG_LEVEL_INFO, "   Zone ID (hardware): %d", cmd.zone_id);
+    kernel_log(LOG_LEVEL_INFO, "   Zone ID (server): %s", cmd.zone_server_id);
+    kernel_log(LOG_LEVEL_INFO, "   Duration: %ds", cmd.duration_seconds);
+    
     // Envoyer commande via HTTP
     if (irrig_comm_send_irrigation_command(&cmd)) {
-        kernel_log(LOG_LEVEL_INFO, "Irrigation command sent successfully");
+        kernel_log(LOG_LEVEL_INFO, "✅ Master → Slave2: Command sent successfully!");
         isIrrigating = true;
         activeIrrigationTimer = millis() + (durationSeconds * 1000);
+        kernel_log(LOG_LEVEL_INFO, "   Irrigation timer set: %lus", activeIrrigationTimer / 1000);
     } else {
-        kernel_log(LOG_LEVEL_ERROR, "Failed to send irrigation command to Slave2");
+        kernel_log(LOG_LEVEL_ERROR, "❌ Master → Slave2: Failed to send command");
     }
 }
 
 void checkIrrigationTimer(void) {
     if (isIrrigating && activeIrrigationTimer > 0 && millis() >= activeIrrigationTimer) {
         // Timer expiré, irrigation devrait être terminée
+        kernel_log(LOG_LEVEL_INFO, "⏱️  Master: Irrigation timer expired");
+        kernel_log(LOG_LEVEL_INFO, "   Irrigation should be complete on Slave2");
         isIrrigating = false;
         activeIrrigationTimer = 0;
-        kernel_log(LOG_LEVEL_INFO, "Irrigation timer expired");
     }
 }
 

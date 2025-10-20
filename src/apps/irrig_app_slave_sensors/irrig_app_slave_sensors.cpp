@@ -11,11 +11,8 @@ static IrrigSensorConfig_t app_config;
 static bool app_initialized = false;
 static unsigned long last_read_time = 0;
 
-// Données capteurs
+// Données capteurs (UNIQUEMENT humidité sol)
 static float simulated_moisture[MAX_SENSORS];
-static float global_temperature = 24.5;
-static float global_humidity = 60.0;
-static float global_pressure = 1012.0;
 
 // Serveur HTTP
 static WebServer* http_server = nullptr;
@@ -194,27 +191,26 @@ void sensors_read_all(SensorDataPacket_t* packet) {
     
     packet->timestamp = millis();
     
-    // Lire capteurs d'humidité
+    // ✅ Lire UNIQUEMENT capteurs d'humidité sol
     if (app_config.simulation_mode) {
         sensors_update_simulation(simulated_moisture);
     } else {
         sensors_read_real(simulated_moisture);
     }
     
-    // Copier données
+    // ✅ Copier UNIQUEMENT données d'humidité
     for (int i = 0; i < MAX_SENSORS; i++) {
         packet->moisture[i] = simulated_moisture[i];
     }
     
-    // Données environnementales
-    packet->temperature = global_temperature;
-    packet->humidity = global_humidity;
-    packet->pressure = global_pressure;
-    packet->battery_level = 85.0 + random(-10, 16);
-    packet->signal_strength = WiFi.RSSI();
+    // ✅ Données globales mises à 0 (seront générées par Master)
+    packet->temperature = 0.0;
+    packet->humidity = 0.0;
+    packet->pressure = 0.0;
+    packet->battery_level = 0.0;
+    packet->signal_strength = 0;
     
-    kernel_log(LOG_LEVEL_DEBUG, "Sensors read: T=%.1f°C, H=%.1f%%, P=%.1fhPa", 
-               packet->temperature, packet->humidity, packet->pressure);
+    kernel_log(LOG_LEVEL_DEBUG, "Slave1: Read %d moisture sensors", MAX_SENSORS);
 }
 
 void sensors_read_real(float moisture[MAX_SENSORS]) {
@@ -241,16 +237,7 @@ void sensors_read_real(float moisture[MAX_SENSORS]) {
 }
 
 void sensors_update_simulation(float moisture[MAX_SENSORS]) {
-    // Mettre à jour données environnementales
-    float tempVariation = (random(-100, 101) / 100.0);
-    float humidityVariation = (random(-250, 251) / 100.0);
-    float pressureVariation = (random(-500, 501) / 100.0);
-    
-    global_temperature = constrain(global_temperature + tempVariation, 15, 40);
-    global_humidity = constrain(global_humidity + humidityVariation, 30, 90);
-    global_pressure = constrain(global_pressure + pressureVariation, 990, 1030);
-    
-    // Mettre à jour capteurs avec variation réaliste
+    // ✅ Mettre à jour UNIQUEMENT capteurs d'humidité sol avec variation réaliste
     for (int i = 0; i < MAX_SENSORS; i++) {
         float variation = (random(-200, 201) / 100.0);
         moisture[i] = constrain(moisture[i] + variation, 15, 85);

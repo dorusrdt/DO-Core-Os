@@ -54,7 +54,8 @@ class SensorConfig(BaseModel):
 class ZoneConfig(BaseModel):
     zoneId: str
     waterPerDay: int
-    irrigationTime: str
+    irrigationTime: Optional[str] = None  # Format ancien (rétrocompatibilité)
+    irrigationTimes: Optional[List[str]] = None  # Format nouveau (tableau)
     humidityThreshold: int
     sensors: List[SensorConfig]
 

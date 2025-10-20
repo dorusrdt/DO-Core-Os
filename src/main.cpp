@@ -397,16 +397,20 @@ void wifi_supervision_task(void* parameter) {
 void on_sensor_data_received(SensorDataPacket_t* data) {
     if (!data) return;
     
-    kernel_log(LOG_LEVEL_DEBUG, "Master: Received sensor data from Slave1");
+    // ✅ Afficher réception données Slave1 (UNIQUEMENT humidité)
+    kernel_log(LOG_LEVEL_INFO, "📥 Slave1 → Master: Moisture data received");
+    kernel_log(LOG_LEVEL_DEBUG, "   Timestamp: %lu | Sensors: %d values", data->timestamp, MAX_SENSORS);
     
+    // Copier données humidité
     for (int i = 0; i < 12; i++) {
         g_received_moisture[i] = data->moisture[i];
     }
-    g_received_temperature = data->temperature;
-    g_received_humidity = data->humidity;
-    g_received_pressure = data->pressure;
     
+    // ✅ Appeler fonction Master qui va GÉNÉRER les données globales
     updateSensorDataFromSlave(data->moisture, data->temperature, data->humidity, data->pressure);
+    
+    // ✅ Les données globales sont maintenant générées par Master
+    // (voir updateGlobalEnvironmentData() dans irrig_app_master.cpp)
 }
 
 void on_irrigation_status_received(IrrigationStatusPacket_t* status) {
@@ -663,10 +667,6 @@ void setup() {
         return;
     }
 
-    // Charger configuration depuis NVS (y compris le rôle)
-    SERIAL_PRINTLN_MINIMAL("Load config...");
-    cmd_irrig_config_load(0, NULL);
-
     // ===== INITIALISER COMMUNICATION HTTP =====
     SERIAL_PRINTLN_MINIMAL("Init HTTP comm...");
     IrrigCommConfig_t comm_config;
@@ -681,6 +681,10 @@ void setup() {
     comm_config.retry_delay_ms = 1000;
     irrig_comm_init(&comm_config);
     SERIAL_PRINTLN_MINIMAL("HTTP comm OK");
+    
+    // Charger configuration depuis NVS (écrase les valeurs par défaut si sauvegardées)
+    SERIAL_PRINTLN_MINIMAL("Load config...");
+    cmd_irrig_config_load(0, NULL);
 
     // ===== ENREGISTRER LES 3 APPS =====
     SERIAL_PRINTLN_MINIMAL("Registering apps...");

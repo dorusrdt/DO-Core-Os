@@ -26,13 +26,17 @@ typedef struct {
 
 // ===== ARCHITECTURE ZONE_STACK / SENSOR_STACK (Code Référence) =====
 
+// Constantes pour les créneaux d'irrigation
+#define MAX_SCHEDULES_PER_ZONE 5  // Maximum 5 créneaux par jour
+
 // Structure d'un slot de zone (exactement comme JS simulator)
 struct ZoneSlot {
     int id;                    // 1-4 (ID physique du slot)
     bool configured;           // Zone configurée ou non
     String zoneId;             // ID serveur (ex: "zone_abc123")
     int waterPerDay;           // Volume d'eau par jour (ml)
-    String irrigationTime;     // Heure irrigation "HH:MM"
+    String irrigationTimes[MAX_SCHEDULES_PER_ZONE];  // Heures d'irrigation (ex: "08:00", "14:00")
+    int scheduleCount;         // Nombre de créneaux configurés (1-5)
     int humidityThreshold;     // Seuil d'urgence (%)
 };
 
@@ -73,6 +77,7 @@ void parseConfiguration(String jsonResponse);
 void handleZoneDeletion(String zoneId);
 
 // Gestion capteurs (reçus des Slaves)
+void updateGlobalEnvironmentData(void);  // ✅ Génère données globales (simulation)
 void updateSensorDataFromSlave(float moisture[MAX_SENSORS], float temp, float hum, float press);
 
 // Communication serveur

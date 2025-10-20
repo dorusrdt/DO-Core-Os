@@ -146,18 +146,20 @@ bool irrig_comm_send_irrigation_command(IrrigationCommandPacket_t* cmd) {
         String payload;
         serializeJson(doc, payload);
         
-        kernel_log(LOG_LEVEL_DEBUG, "IrrigComm: Sending command '%s' to Slave2 (attempt %d/%d)", 
-                   cmd_str, attempt + 1, g_comm_config.retry_count);
+        kernel_log(LOG_LEVEL_INFO, "📤 Master → Slave2: Sending '%s' to http://%s:%d (attempt %d/%d)", 
+                   cmd_str, g_comm_config.slave2_ip, g_comm_config.slave2_port,
+                   attempt + 1, g_comm_config.retry_count);
+        kernel_log(LOG_LEVEL_DEBUG, "   Payload: %s", payload.c_str());
         
         int httpCode = http.POST(payload);
         
         if (httpCode == 200) {
-            kernel_log(LOG_LEVEL_INFO, "IrrigComm: Command sent successfully");
+            kernel_log(LOG_LEVEL_INFO, "✅ Master → Slave2: Command '%s' sent successfully!", cmd_str);
             success = true;
             http.end();
             break;
         } else {
-            kernel_log(LOG_LEVEL_WARN, "IrrigComm: HTTP error %d (attempt %d/%d)", 
+            kernel_log(LOG_LEVEL_WARN, "⚠️ Master → Slave2: HTTP error %d (attempt %d/%d)", 
                        httpCode, attempt + 1, g_comm_config.retry_count);
             http.end();
             delay(g_comm_config.retry_delay_ms);
@@ -208,6 +210,14 @@ bool irrig_comm_publish_irrigation_status(IrrigationStatusPacket_t* status) {
     
     String payload;
     serializeJson(doc, payload);
+    
+    kernel_log(LOG_LEVEL_INFO, "📤 Slave2 → Master: Sending status");
+    kernel_log(LOG_LEVEL_INFO, "   Zone: %d | Irrigating: %s | Remaining: %lus | Pump: %s",
+               status->zone_id, 
+               status->is_irrigating ? "YES" : "NO",
+               status->remaining_seconds,
+               status->pump_running ? "ON" : "OFF");
+    kernel_log(LOG_LEVEL_DEBUG, "   Payload: %s", payload.c_str());
     
     int httpCode = http.POST(payload);
     http.end();
