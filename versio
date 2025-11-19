@@ -1,0 +1,975 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <mbedtls/md.h>
+#include <time.h>
+#include "config.h"
+
+// Forward declarations
+void initializeHardware();
+void initializeSimulatedSensors();
+void connectToWiFi();
+void reconnectWiFi();
+void registerDevice();
+void pollConfiguration();
+void parseConfiguration(String jsonResponse);
+void readAllSensors();
+void updateSimulatedSensors();
+void sendSensorData();
+void checkIrrigationSchedule();
+void checkMoistureThresholds();
+void startIrrigation(int zoneIndex, int durationSeconds);
+void reportIrrigation(int zoneIndex, int duration);
+void handleZoneDeletion(String zoneId);
+void executeIrrigation(String zoneId, int durationSeconds);
+void checkIrrigationTimer();
+String generateHMAC(String data);
+String getTimestamp();
+
+// WiFi Configuration
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
+
+// Server Configuration
+const char* serverURL = SERVER_URL;
+const char* deviceId = DEVICE_ID;
+const char* deviceSecret = DEVICE_SECRET;
+
+// Zone Stack Structure (exactly like JS simulator)
+struct ZoneSlot {
+  int id;  // Array index (0-99)
+  int physicalZoneNumber;  // Physical relay/zone number from server (1-100)
+  bool configured;
+  String zoneId;
+  int waterPerDay;
+  String irrigationTime;
+  int humidityThreshold;
+  // Sensors will be tracked in SENSOR_STACK
+};
+
+// Sensor Stack Structure (exactly like JS simulator)
+struct SensorSlot {
+  String id;
+  bool assigned;
+  String zoneId;
+};
+
+// Global Variables
+ZoneSlot ZONE_STACK[MAX_ZONES]; // Dynamic zones based on config.h
+SensorSlot SENSOR_STACK[MAX_SENSORS]; // Dynamic sensors based on config.h
+String assignedZones[MAX_ZONES]; // Track assigned zone IDs
+int assignedZoneCount = 0;
+
+unsigned long lastConfigPoll = 0;
+unsigned long lastSensorRead = 0;
+unsigned long lastDataSend = 0;
+bool deviceRegistered = false;
+bool deviceAssigned = false;
+bool wifiConnected = false;
+
+// Global sensor data for environmental conditions
+float globalTemperature = 24.5;
+float globalHumidity = 60.0;
+float globalPressure = 1012.0;
+
+// Simulation Variables
+float simulatedMoisture[MAX_SENSORS];
+bool pumpRunning = false;
+
+// Irrigation Control Variables
+bool isIrrigating = false;
+unsigned long activeIrrigationTimer = 0;
+const int PUMP_PIN = 2; // GPIO pin for pump control
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000); // Give serial time to initialize
+
+  Serial.println("\n🚀 ESP32 Irrigation Device Simulator v2.0...");
+  Serial.printf("📱 Device ID: %s\n", DEVICE_ID);
+  Serial.println("===========================================\n");
+
+  // Initialize zone stack (dynamic based on MAX_ZONES)
+  for (int i = 0; i < MAX_ZONES; i++) {
+    ZONE_STACK[i].id = i + 1;
+    ZONE_STACK[i].configured = false;
+    ZONE_STACK[i].zoneId = "";
+    ZONE_STACK[i].waterPerDay = 0;
+    ZONE_STACK[i].irrigationTime = "";
+    ZONE_STACK[i].humidityThreshold = 0;
+  }
+
+  // Initialize sensor stack (dynamic based on MAX_SENSORS)
+  for (int i = 0; i < MAX_SENSORS; i++) {
+    // Generate sensor IDs: s01-s99 (2 digits), s100-s999 (3 digits)
+    if (i < 9) {
+      SENSOR_STACK[i].id = "s0" + String(i + 1);
+    } else if (i < 99) {
+      SENSOR_STACK[i].id = "s" + String(i + 1);
+    } else {
+      SENSOR_STACK[i].id = "s" + String(i + 1);
+    }
+    SENSOR_STACK[i].assigned = false;
+    SENSOR_STACK[i].zoneId = "";
+  }
+
+  // Initialize hardware
+  initializeHardware();
+
+  // Connect to WiFi
+  connectToWiFi();
+
+  if (wifiConnected) {
+    // Initialize time (needed for getLocalTime)
+    Serial.println("⏰ Configuring NTP time...");
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+    // Protocol 1: Register device with server
+    registerDevice();
+
+    if (deviceRegistered) {
+      Serial.println("⏳ Device registered. Checking for existing assignments...");
+    }
+  }
+
+  // Initialize sensor simulation
+  for (int i = 0; i < MAX_SENSORS; i++) {
+    simulatedMoisture[i] = 30 + random(0, 30); // 30-60% initial moisture
+  }
+
+  Serial.println("✅ ESP32 Irrigation System Ready!");
+  Serial.println("===========================================\n");
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+
+  // Check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    reconnectWiFi();
+    return;
+  }
+
+  // Check irrigation timer
+  checkIrrigationTimer();
+
+  // Poll configuration every 10 seconds
+  if (currentTime - lastConfigPoll >= 10000) {
+    pollConfiguration();
+    lastConfigPoll = currentTime;
+  }
+
+  // Read sensors every 5 seconds
+  if (currentTime - lastSensorRead >= 5000) {
+    readAllSensors();
+    lastSensorRead = currentTime;
+  }
+
+  // Send sensor data every 15 seconds
+  if (currentTime - lastDataSend >= 15000) {
+    sendSensorData();
+    lastDataSend = currentTime;
+  }
+
+  // Check irrigation schedule every minute
+  if (currentTime % 60000 < 1000) {
+    checkIrrigationSchedule();
+  }
+
+  // Check moisture thresholds every 30 seconds
+  if (currentTime % 30000 < 1000) {
+    checkMoistureThresholds();
+  }
+
+  delay(1000); // 1 second delay
+}
+
+void initializeHardware() {
+  #ifdef USE_REAL_HARDWARE
+    Serial.println("🔧 Initializing real hardware...");
+    initializeRealHardware();
+  #else
+    Serial.println("🔧 Initializing hardware (SIMULATION MODE)...");
+  #endif
+
+  // Initialize status LED
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, LOW);
+
+  // Initialize sensor values
+  initializeSimulatedSensors();
+
+  #ifdef USE_REAL_HARDWARE
+    Serial.println("📊 Initialized 12 real moisture sensors");
+    Serial.println("💧 Initialized 4 real zone relays + pump");
+    Serial.println("🔧 REAL HARDWARE MODE: Physical sensors and relays active");
+  #else
+    Serial.println("📊 Initialized 12 simulated moisture sensors");
+    Serial.println("💧 Initialized 4 simulated zone relays + pump");
+    Serial.println("🎭 SIMULATION MODE: No physical sensors or relays required");
+  #endif
+}
+
+void initializeRealHardware() {
+  // Initialize relay pins as outputs
+  pinMode(ZONE_1_RELAY_PIN, OUTPUT);
+  pinMode(ZONE_2_RELAY_PIN, OUTPUT);
+  pinMode(ZONE_3_RELAY_PIN, OUTPUT);
+  pinMode(ZONE_4_RELAY_PIN, OUTPUT);
+  pinMode(PUMP_RELAY_PIN, OUTPUT);
+
+  // Ensure all relays start OFF (LOW = OFF for most relay modules)
+  digitalWrite(ZONE_1_RELAY_PIN, LOW);
+  digitalWrite(ZONE_2_RELAY_PIN, LOW);
+  digitalWrite(ZONE_3_RELAY_PIN, LOW);
+  digitalWrite(ZONE_4_RELAY_PIN, LOW);
+  digitalWrite(PUMP_RELAY_PIN, LOW);
+
+  // Initialize moisture sensor pins (analog inputs don't need pinMode)
+  // ADC pins are automatically configured when using analogRead()
+
+  Serial.println("🔧 Real hardware pins initialized:");
+  Serial.printf("   Zone relays: %d, %d, %d, %d\n", ZONE_1_RELAY_PIN, ZONE_2_RELAY_PIN, ZONE_3_RELAY_PIN, ZONE_4_RELAY_PIN);
+  Serial.printf("   Pump relay: %d\n", PUMP_RELAY_PIN);
+  Serial.printf("   Status LED: %d\n", STATUS_LED_PIN);
+}
+
+void initializeSimulatedSensors() {
+  Serial.println("🎭 Initializing sensor simulation...");
+
+  // Initialize with realistic moisture values for different zones
+  for (int i = 0; i < MAX_SENSORS; i++) {
+    int zoneIndex = i / SENSORS_PER_ZONE;
+
+    // Different base moisture levels for different zones
+    switch (zoneIndex) {
+      case 0: // Zone 1 - Tomatoes (need more water)
+        simulatedMoisture[i] = 35 + random(-5, 10);
+        break;
+      case 1: // Zone 2 - Lettuce (holds moisture well)
+        simulatedMoisture[i] = 55 + random(-5, 8);
+        break;
+      case 2: // Zone 3 - Carrots (moderate moisture)
+        simulatedMoisture[i] = 45 + random(-8, 12);
+        break;
+      case 3: // Zone 4 - Mixed vegetables
+        simulatedMoisture[i] = 50 + random(-10, 10);
+        break;
+    }
+
+    // Ensure values are within realistic range
+    simulatedMoisture[i] = constrain(simulatedMoisture[i], 15, 85);
+
+    Serial.printf("   Sensor %d (Zone %d): %.1f%% moisture\n",
+                  i+1, zoneIndex+1, simulatedMoisture[i]);
+  }
+}
+
+void connectToWiFi() {
+  Serial.println("📶 Connecting to WiFi...");
+  Serial.printf("SSID: %s\n", WIFI_SSID);
+
+  // Disconnect if already connected
+  WiFi.disconnect();
+  delay(100);
+
+  // Set WiFi mode
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
+  // Begin connection
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(1000);
+    Serial.print(".");
+    Serial.printf(" Status: %d ", WiFi.status());
+    attempts++;
+
+    // Try to reconnect every 10 attempts
+    if (attempts % 10 == 0) {
+      Serial.println("\n🔄 Retrying WiFi connection...");
+      WiFi.disconnect();
+      delay(1000);
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    Serial.println("\n✅ WiFi connected!");
+    Serial.printf("📍 IP address: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("📡 Signal strength: %d dBm\n", WiFi.RSSI());
+    digitalWrite(STATUS_LED_PIN, HIGH);
+  } else {
+    Serial.println("\n❌ WiFi connection failed!");
+    Serial.printf("Final status: %d\n", WiFi.status());
+    wifiConnected = false;
+    digitalWrite(STATUS_LED_PIN, LOW);
+  }
+}
+
+void reconnectWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiConnected = false;
+    deviceRegistered = false; // Reset registration status
+    Serial.println("🔄 WiFi disconnected, reconnecting...");
+    connectToWiFi();
+
+    // Re-register device after WiFi reconnection
+    if (wifiConnected) {
+      registerDevice();
+    }
+  }
+}
+
+void registerDevice() {
+  if (!wifiConnected) {
+    Serial.println("❌ Cannot register: WiFi not connected");
+    return;
+  }
+
+  Serial.println("📝 Registering device with server...");
+  Serial.printf("Server URL: %s\n", SERVER_URL);
+  Serial.printf("Device ID: %s\n", DEVICE_ID);
+
+  HTTPClient http;
+  http.setTimeout(30000); // 30 second timeout
+
+  String url = String(SERVER_URL) + "/api/devices/register";
+  Serial.printf("POST URL: %s\n", url.c_str());
+
+  if (!http.begin(url)) {
+    Serial.println("❌ Failed to initialize HTTP client");
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+
+  // Create registration payload
+  DynamicJsonDocument doc(1024);
+  doc["type"] = "register";
+  doc["deviceId"] = DEVICE_ID;
+  doc["capacity"]["zones"] = MAX_ZONES;
+  doc["capacity"]["sensors"] = MAX_SENSORS;
+  doc["timestamp"] = getTimestamp();
+
+  String payload;
+  serializeJson(doc, payload);
+  Serial.printf("Payload: %s\n", payload.c_str());
+
+  // Add HMAC signature
+  String timestamp = String(millis());
+  String signature = generateHMAC(payload + timestamp);
+  http.addHeader("X-Signature", signature);
+  http.addHeader("X-Timestamp", timestamp);
+
+  Serial.println("📤 Sending registration request...");
+
+  int retryCount = 0;
+  int maxRetries = 3;
+  int httpResponseCode = -1;
+
+  while (retryCount < maxRetries && httpResponseCode <= 0) {
+    if (retryCount > 0) {
+      Serial.printf("🔄 Retry attempt %d/%d...\n", retryCount + 1, maxRetries);
+      delay(5000); // Wait 5 seconds between retries
+    }
+
+    httpResponseCode = http.POST(payload);
+    Serial.printf("Response code: %d\n", httpResponseCode);
+
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.printf("Response: %s\n", response.c_str());
+
+      if (httpResponseCode == 200 || httpResponseCode == 201) {
+        Serial.println("✅ Device registered successfully");
+        deviceRegistered = true;
+        break;
+      } else {
+        Serial.printf("❌ Registration failed with code: %d\n", httpResponseCode);
+        deviceRegistered = false;
+      }
+    } else {
+      Serial.printf("❌ HTTP request failed: %s\n", http.errorToString(httpResponseCode).c_str());
+      retryCount++;
+    }
+  }
+
+  if (!deviceRegistered) {
+    Serial.printf("❌ Registration failed after %d attempts\n", maxRetries);
+  }
+
+  http.end();
+}
+
+void pollConfiguration() {
+  if (!wifiConnected) {
+    Serial.println("❌ Cannot poll config: WiFi not connected");
+    return;
+  }
+
+  if (!deviceRegistered) {
+    Serial.println("❌ Cannot poll config: Device not registered");
+    return;
+  }
+
+  Serial.println("📡 Polling configuration...");
+
+  HTTPClient http;
+  http.setTimeout(10000); // 10 second timeout
+  http.setConnectTimeout(5000); // 5 second connection timeout
+
+  String url = String(SERVER_URL) + "/api/devices/" + DEVICE_ID + "/config";
+  Serial.printf("GET URL: %s\n", url.c_str());
+
+  if (!http.begin(url)) {
+    Serial.println("❌ Failed to initialize HTTP client for config");
+    return;
+  }
+
+  // Add hash header for change detection
+  static String lastConfigHash = "";
+  if (lastConfigHash.length() > 0) {
+    http.addHeader("X-Last-Config-Hash", lastConfigHash);
+  }
+
+  int httpResponseCode = http.GET();
+  Serial.printf("Config response code: %d\n", httpResponseCode);
+
+  if (httpResponseCode == 200) {
+    String response = http.getString();
+    Serial.printf("Config response: %s\n", response.c_str());
+
+    // Update config hash from response headers
+    if (http.hasHeader("X-Config-Hash")) {
+      lastConfigHash = http.header("X-Config-Hash");
+      Serial.printf("New config hash: %s\n", lastConfigHash.c_str());
+    }
+
+    parseConfiguration(response);
+  } else if (httpResponseCode == 304) {
+    Serial.println("📡 Configuration unchanged");
+  } else if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.printf("❌ Config poll failed: %d - %s\n", httpResponseCode, response.c_str());
+  } else {
+    Serial.printf("❌ HTTP request failed: %s\n", http.errorToString(httpResponseCode).c_str());
+  }
+
+  http.end();
+}
+
+void parseConfiguration(String jsonResponse) {
+  // Buffer size: 32KB to handle multiple zones with many sensors (up to ~900 sensors total)
+  DynamicJsonDocument doc(32768);
+  deserializeJson(doc, jsonResponse);
+
+  // Check for direct delete_zone command
+  if (doc["type"] == "delete_zone") {
+    String zoneId = doc["zoneId"];
+    handleZoneDeletion(zoneId);
+    return; // Exit early after handling deletion
+  }
+
+  // Check for pending commands first (exactly like JS simulator)
+  if (doc.containsKey("commands")) {
+    JsonArray commands = doc["commands"];
+    for (JsonVariant cmd : commands) {
+      String action = cmd["action"];
+      if (action == "delete_zone") {
+        String zoneId = cmd["zoneId"];
+        handleZoneDeletion(zoneId);
+      }
+    }
+  }
+
+  if (doc["type"] == "config") {
+    JsonArray zonesArray = doc["zones"];
+    int newZoneCount = zonesArray.size();
+
+    Serial.printf("🌱 Received configuration for %d zones:\n", newZoneCount);
+
+    // Process each zone in the configuration
+    for (int i = 0; i < newZoneCount && i < MAX_ZONES; i++) {
+      JsonObject zone = zonesArray[i];
+      String zoneId = zone["zoneId"].as<String>();
+
+      // Check if this zone already exists (preserve existing zones)
+      ZoneSlot* existingSlot = nullptr;
+      for (int j = 0; j < MAX_ZONES; j++) {
+        if (ZONE_STACK[j].configured && ZONE_STACK[j].zoneId == zoneId) {
+          existingSlot = &ZONE_STACK[j];
+          Serial.printf("   Zone %d: %s (existing - preserving sensors)\n", existingSlot->id, zoneId.c_str());
+          break;
+        }
+      }
+
+      // If zone exists, update config AND reassign sensors
+      if (existingSlot) {
+        existingSlot->waterPerDay = zone["waterPerDay"];
+        existingSlot->irrigationTime = zone["irrigationTime"].as<String>();
+        existingSlot->humidityThreshold = zone["humidityThreshold"];
+        Serial.printf("     Water: %dml/day, Time: %s, Threshold: %d%% (updated)\n",
+                     existingSlot->waterPerDay, existingSlot->irrigationTime.c_str(), existingSlot->humidityThreshold);
+
+        // IMPORTANT: Clear old sensors for this zone and reassign new ones
+        Serial.printf("     🔄 Updating sensors for existing zone %s\n", zoneId.c_str());
+        for (int s = 0; s < MAX_SENSORS; s++) {
+          if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zoneId) {
+            SENSOR_STACK[s].assigned = false;
+            SENSOR_STACK[s].zoneId = "";
+            SENSOR_STACK[s].id = "";
+          }
+        }
+
+        // Reassign new sensors from server config
+        JsonArray sensors = zone["sensors"];
+        for (int k = 0; k < sensors.size(); k++) {
+          JsonObject sensor = sensors[k];
+          String configSensorId = sensor["sensorId"].as<String>();
+
+          Serial.printf("     Reassigning sensor: %s\n", configSensorId.c_str());
+
+          // Find an available sensor slot and assign it with the real ID
+          for (int s = 0; s < MAX_SENSORS; s++) {
+            if (!SENSOR_STACK[s].assigned) {
+              SENSOR_STACK[s].assigned = true;
+              SENSOR_STACK[s].id = configSensorId;
+              SENSOR_STACK[s].zoneId = zoneId;
+              Serial.printf("     ✅ Sensor %s assigned to slot %d for zone %s\n",
+                           configSensorId.c_str(), s, zoneId.c_str());
+              break;
+            }
+          }
+        }
+        continue; // Skip new zone creation
+      }
+
+      // Get physical zone number from server configuration
+      int physicalZoneNumber = zone["physicalZoneNumber"] | 1; // Default to 1 if not specified
+      int zoneIndex = physicalZoneNumber - 1; // Convert to 0-based index
+
+      // Validate zone index
+      if (zoneIndex < 0 || zoneIndex >= MAX_ZONES) {
+        Serial.printf("   ⚠️ Invalid physical zone number %d, skipping\n", physicalZoneNumber);
+        continue;
+      }
+
+      // Use the specified physical zone slot
+      ZoneSlot* slot = &ZONE_STACK[zoneIndex];
+
+      if (slot->configured && slot->zoneId != zoneId) {
+        Serial.printf("   ⚠️ Physical zone %d already occupied by %s, skipping %s\n",
+                     physicalZoneNumber, slot->zoneId.c_str(), zoneId.c_str());
+        continue;
+      }
+
+      slot->configured = true;
+      slot->zoneId = zoneId;
+      slot->physicalZoneNumber = physicalZoneNumber;  // Store physical zone number
+      slot->waterPerDay = zone["waterPerDay"];
+      slot->irrigationTime = zone["irrigationTime"].as<String>();
+      slot->humidityThreshold = zone["humidityThreshold"];
+
+      Serial.printf("   Zone %d (Physical #%d): %s\n", slot->id, physicalZoneNumber, zoneId.c_str());
+      Serial.printf("     Water: %dml/day, Time: %s, Threshold: %d%%\n",
+                   slot->waterPerDay, slot->irrigationTime.c_str(), slot->humidityThreshold);
+
+      // Assign sensors to this zone with proper sequential sensor ID mapping
+      JsonArray sensors = zone["sensors"];
+
+      // Calculate baseOffset by counting sensors from all previously configured zones
+      int baseOffset = 0;
+      int currentSlotIndex = slot - ZONE_STACK;
+
+      // Count sensors from zones that are already configured in earlier slots
+      for (int z = 0; z < currentSlotIndex; z++) {
+        if (ZONE_STACK[z].configured) {
+          // Count actual sensors assigned to this zone
+          for (int s = 0; s < MAX_SENSORS; s++) {
+            if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[z].zoneId) {
+              baseOffset++;
+            }
+          }
+        }
+      }
+
+      for (int k = 0; k < sensors.size(); k++) {
+        JsonObject sensor = sensors[k];
+        String configSensorId = sensor["sensorId"].as<String>();
+
+        // Use the actual sensor ID from server configuration (s04, s05, etc.)
+        Serial.printf("     Assigning sensor: %s\n", configSensorId.c_str());
+
+        // Find an available sensor slot and assign it with the real ID
+        for (int s = 0; s < MAX_SENSORS; s++) {
+          if (!SENSOR_STACK[s].assigned) {
+            SENSOR_STACK[s].assigned = true;
+            SENSOR_STACK[s].id = configSensorId; // Use real ID from server
+            SENSOR_STACK[s].zoneId = zoneId;
+            Serial.printf("     ✅ Sensor %s assigned to slot %d for zone %s\n",
+                         configSensorId.c_str(), s, zoneId.c_str());
+            break;
+          }
+        }
+      }
+
+      assignedZones[assignedZoneCount++] = zoneId;
+
+      Serial.printf("   Zone %d: %s\n", slot->id, zoneId.c_str());
+      Serial.printf("     Water: %dml/day, Time: %s, Threshold: %d%%\n",
+                    slot->waterPerDay, slot->irrigationTime.c_str(), slot->humidityThreshold);
+      Serial.printf("     Sensors: %d\n", sensors.size());
+    }
+
+    // Update device assignment status
+    deviceAssigned = (assignedZoneCount > 0);
+  }
+}
+
+void handleZoneDeletion(String zoneId) {
+  Serial.printf("🗑️ Processing zone deletion: %s\n", zoneId.c_str());
+
+  // Stop any active irrigation immediately if it's for this zone
+  if (isIrrigating && activeIrrigationTimer > 0) {
+    Serial.println("🛑 Stopping active irrigation for zone deletion");
+    activeIrrigationTimer = 0;
+    isIrrigating = false;
+    digitalWrite(PUMP_PIN, LOW);
+    Serial.println("💧 Pump: OFF (Emergency stop for zone deletion)");
+  }
+
+  // Find the zone slot to remove
+  ZoneSlot* zoneSlot = nullptr;
+  for (int i = 0; i < MAX_ZONES; i++) {
+    if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
+      zoneSlot = &ZONE_STACK[i];
+      Serial.printf("🗑️ Found zone %s in slot %d\n", zoneId.c_str(), zoneSlot->id);
+      break;
+    }
+  }
+
+  if (zoneSlot) {
+    // Free sensors assigned to this zone
+    for (int i = 0; i < MAX_SENSORS; i++) {
+      if (SENSOR_STACK[i].assigned && SENSOR_STACK[i].zoneId == zoneId) {
+        SENSOR_STACK[i].assigned = false;
+        SENSOR_STACK[i].zoneId = "";
+        Serial.printf("🔓 Freed sensor %s\n", SENSOR_STACK[i].id.c_str());
+      }
+    }
+
+    // Clear the zone slot
+    zoneSlot->configured = false;
+    zoneSlot->zoneId = "";
+    zoneSlot->waterPerDay = 0;
+    zoneSlot->irrigationTime = "";
+    zoneSlot->humidityThreshold = 0;
+    Serial.printf("🗑️ Zone %s removed from device\n", zoneId.c_str());
+
+    // Remove from assignedZones array
+    for (int i = 0; i < assignedZoneCount; i++) {
+      if (assignedZones[i] == zoneId) {
+        for (int j = i; j < assignedZoneCount - 1; j++) {
+          assignedZones[j] = assignedZones[j + 1];
+        }
+        assignedZoneCount--;
+        Serial.printf("🗑️ Zone %s removed from assigned zones list\n", zoneId.c_str());
+        break;
+      }
+    }
+
+    // Update device assignment status
+    if (assignedZoneCount == 0) {
+      deviceAssigned = false;
+      Serial.println("📱 Device no longer assigned to any zones");
+    }
+
+  } else {
+    Serial.printf("⚠️ Zone %s not found on this device\n", zoneId.c_str());
+  }
+}
+
+void readAllSensors() {
+  // Read real sensors or use simulation
+  #ifdef USE_REAL_SENSORS
+    readRealSensors();
+  #else
+    updateSimulatedSensors();
+  #endif
+
+  // Only show sensor readings for assigned sensors in configured zones
+  if (assignedZoneCount > 0) {
+    Serial.println("📊 Current sensor readings:");
+
+    // Clean up orphaned sensors first (sensors assigned to deleted zones)
+    for (int s = 0; s < MAX_SENSORS; s++) {
+      if (SENSOR_STACK[s].assigned) {
+        bool zoneExists = false;
+        for (int i = 0; i < MAX_ZONES; i++) {
+          if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == SENSOR_STACK[s].zoneId) {
+            zoneExists = true;
+            break;
+          }
+        }
+
+        if (!zoneExists) {
+          Serial.printf("🧹 Cleaning orphaned sensor %s (zone no longer exists)\n", SENSOR_STACK[s].id.c_str());
+          SENSOR_STACK[s].assigned = false;
+          SENSOR_STACK[s].zoneId = "";
+        }
+      }
+    }
+
+    // Display sensors using physical zone numbers
+    for (int i = 0; i < MAX_ZONES; i++) {
+      if (ZONE_STACK[i].configured) {
+        int sensorCount = 0;
+        for (int s = 0; s < MAX_SENSORS; s++) {
+          if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
+            sensorCount++;
+            Serial.printf("   Zone %d, Sensor %d (%s): %.1f%% moisture\n",
+                          ZONE_STACK[i].physicalZoneNumber, sensorCount, SENSOR_STACK[s].id.c_str(), simulatedMoisture[s]);
+          }
+        }
+      }
+    }
+  } else {
+    Serial.println("📊 No zones configured - sensor readings not displayed");
+  }
+}
+
+void updateSimulatedSensors() {
+  // Update global environmental data (exactly like JS simulator)
+  float tempVariation = (random(-100, 101) / 100.0); // ±1°C
+  float humidityVariation = (random(-250, 251) / 100.0); // ±2.5%
+  float pressureVariation = (random(-500, 501) / 100.0); // ±5 hPa
+
+  globalTemperature = constrain(globalTemperature + tempVariation, 15, 40);
+  globalHumidity = constrain(globalHumidity + humidityVariation, 30, 90);
+  globalPressure = constrain(globalPressure + pressureVariation, 990, 1030);
+
+  // Generate realistic sensor readings for individual sensors (exactly like JS simulator)
+  for (int i = 0; i < MAX_SENSORS; i++) {
+    // Simulate realistic variations per sensor
+    float baseValue = 30 + (i * 2); // Different base for each sensor
+    float variation = (random(-500, 501) / 100.0); // ±5%
+
+    simulatedMoisture[i] = constrain(baseValue + variation, 15, 75);
+  }
+}
+
+void sendSensorData() {
+  if (!wifiConnected) return;
+
+  HTTPClient http;
+  http.setTimeout(30000); // 30 second timeout
+  http.begin(String(SERVER_URL) + "/api/devices/sensor-data");
+  http.addHeader("Content-Type", "application/json");
+
+  // Create sensor data payload exactly like JS simulator
+  // Buffer size: 32KB to support up to ~900 sensors (35 bytes each) + overhead
+  DynamicJsonDocument doc(32768);
+  doc["type"] = "data";
+  doc["deviceId"] = DEVICE_ID;
+  doc["timestamp"] = getTimestamp();
+
+  // Global environmental data (exactly like JS simulator)
+  JsonObject globalData = doc.createNestedObject("globalData");
+  globalData["temperature"] = globalTemperature;
+  globalData["humidity"] = globalHumidity;
+  globalData["pressure"] = globalPressure;
+  globalData["batteryLevel"] = 85.0 + random(-10, 16); // Simulated battery
+  globalData["signalStrength"] = WiFi.RSSI();
+
+  // Zones array with sensor data (exactly like JS simulator)
+  JsonArray zonesArray = doc.createNestedArray("zonesData");
+
+  Serial.printf("📊 Sending sensor data: %d zones (assignedZoneCount: %d)\n", assignedZoneCount, assignedZoneCount);
+
+  // Only send zone data if zones are actually configured
+  if (assignedZoneCount > 0) {
+    // Send data for each configured zone (using MAX_ZONES for dynamic support)
+    for (int i = 0; i < MAX_ZONES; i++) {
+      if (ZONE_STACK[i].configured) {
+        JsonObject zoneObj = zonesArray.createNestedObject();
+        zoneObj["zoneId"] = ZONE_STACK[i].zoneId;
+
+        JsonArray moistureArray = zoneObj.createNestedArray("soilMoisture");
+
+        // Add sensor data for this zone (using MAX_SENSORS for dynamic support)
+        for (int s = 0; s < MAX_SENSORS; s++) {
+          if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
+            JsonObject sensorObj = moistureArray.createNestedObject();
+            sensorObj["sensorId"] = SENSOR_STACK[s].id;
+            sensorObj["value"] = simulatedMoisture[s];
+          }
+        }
+      }
+    }
+  } else {
+    Serial.println("📊 No zones configured - sending only global environmental data");
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+
+  // Debug output (exactly like JS simulator)
+  Serial.printf("🔐 Full payload: %s\n", payload.c_str());
+
+  // Debug zone configuration and sensor data only if zones are configured
+  if (assignedZoneCount > 0) {
+    for (int i = 0; i < MAX_ZONES; i++) {
+      if (ZONE_STACK[i].configured) {
+        int sensorCount = 0;
+        Serial.printf("   Zone %d config: ", ZONE_STACK[i].physicalZoneNumber);
+        for (int s = 0; s < MAX_SENSORS; s++) {
+          if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
+            sensorCount++;
+          }
+        }
+        Serial.printf("%d sensors\n", sensorCount);
+
+        // Show actual sensor values being sent
+        int sensorIndex = 1;
+        for (int s = 0; s < MAX_SENSORS; s++) {
+          if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
+            Serial.printf("     Sensor %d (%s): %.1f%%\n", sensorIndex++, SENSOR_STACK[s].id.c_str(), simulatedMoisture[s]);
+          }
+        }
+      }
+    }
+  } else {
+    Serial.println("   No zones configured - only global data sent");
+  }
+
+  // Add HMAC signature
+  String timestamp = String(millis());
+  String signature = generateHMAC(payload + timestamp);
+  http.addHeader("X-Signature", signature);
+  http.addHeader("X-Timestamp", timestamp);
+
+  int httpResponseCode = http.POST(payload);
+
+  if (httpResponseCode == 200) {
+    Serial.printf("✅ Sensor data sent successfully\n");
+  } else {
+    String response = http.getString();
+    Serial.printf("❌ Sensor data send failed: %d - %s\n", httpResponseCode, response.c_str());
+  }
+
+  http.end();
+}
+
+void checkIrrigationSchedule() {
+  if (!deviceRegistered || assignedZoneCount == 0) return;
+
+  // Get current time
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return;
+  }
+
+  char currentTime[6];
+  strftime(currentTime, sizeof(currentTime), "%H:%M", &timeinfo);
+
+  for (int i = 0; i < MAX_ZONES; i++) {
+    if (ZONE_STACK[i].configured && ZONE_STACK[i].irrigationTime.equals(String(currentTime))) {
+      Serial.printf("⏰ Scheduled irrigation for zone %d\n", ZONE_STACK[i].id);
+      executeIrrigation(ZONE_STACK[i].zoneId, ZONE_STACK[i].waterPerDay / 10); // Convert ml to seconds
+    }
+  }
+}
+
+void checkMoistureThresholds() {
+  for (int i = 0; i < MAX_ZONES; i++) {
+    if (!ZONE_STACK[i].configured) continue;
+
+    // Check average moisture for this zone using simulated values
+    float totalMoisture = 0;
+    int sensorCount = 0;
+
+    for (int s = 0; s < MAX_SENSORS; s++) {
+      if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
+        totalMoisture += simulatedMoisture[s];
+        sensorCount++;
+      }
+    }
+
+    if (sensorCount > 0) {
+      float avgMoisture = totalMoisture / sensorCount;
+
+      if (avgMoisture < ZONE_STACK[i].humidityThreshold) {
+        Serial.printf("🚨 Zone %d moisture critical: %.1f%% < %d%%\n",
+                      ZONE_STACK[i].id, avgMoisture, ZONE_STACK[i].humidityThreshold);
+
+        // Emergency irrigation
+        executeIrrigation(ZONE_STACK[i].zoneId, 60); // 1 minute emergency irrigation
+      }
+    }
+  }
+}
+
+void checkIrrigationTimer() {
+  if (isIrrigating && activeIrrigationTimer > 0 && millis() >= activeIrrigationTimer) {
+    // Stop irrigation
+    isIrrigating = false;
+    activeIrrigationTimer = 0;
+    digitalWrite(PUMP_PIN, LOW);
+    pumpRunning = false;
+    Serial.println("✅ Irrigation completed");
+    Serial.println("💧 Pump: OFF");
+  }
+}
+
+void executeIrrigation(String zoneId, int durationSeconds) {
+  // Find the zone slot
+  ZoneSlot* zoneSlot = nullptr;
+  for (int i = 0; i < MAX_ZONES; i++) {
+    if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
+      zoneSlot = &ZONE_STACK[i];
+      break;
+    }
+  }
+
+  if (!zoneSlot) {
+    Serial.printf("⚠️ Zone %s not found or not configured\n", zoneId.c_str());
+    return;
+  }
+
+  if (isIrrigating) {
+    Serial.printf("⚠️ Irrigation already in progress, queuing command\n");
+    return;
+  }
+
+  Serial.printf("💧 Starting irrigation for zone %s\n", zoneId.c_str());
+  Serial.printf("💧 Pump: ON - Duration: %ds\n", durationSeconds);
+  isIrrigating = true;
+
+  // Turn on pump
+  digitalWrite(PUMP_PIN, HIGH);
+  pumpRunning = true;
+
+  // Set timer for irrigation duration
+  activeIrrigationTimer = millis() + (durationSeconds * 1000);
+}
+
+String generateHMAC(String data) {
+  // Simple HMAC-SHA256 implementation
+  // In production, use a proper HMAC library
+  return "dummy_signature_" + String(millis());
+}
+
+String getTimestamp() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return String(millis()); // Fallback to millis
+  }
+
+  char timestamp[32];
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S.000Z", &timeinfo);
+  return String(timestamp);
+}

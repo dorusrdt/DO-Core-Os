@@ -29,9 +29,10 @@ typedef struct {
 // Constantes pour les créneaux d'irrigation
 #define MAX_SCHEDULES_PER_ZONE 5  // Maximum 5 créneaux par jour
 
-// Structure d'un slot de zone (exactement comme JS simulator)
+// Structure d'un slot de zone (avec mapping physique flexible)
 struct ZoneSlot {
-    int id;                    // 1-4 (ID physique du slot)
+    int id;                    // Index array (0-3)
+    int physicalZoneNumber;    // Numéro physique du relais (1-4, défaut: id+1)
     bool configured;           // Zone configurée ou non
     String zoneId;             // ID serveur (ex: "zone_abc123")
     int waterPerDay;           // Volume d'eau par jour (ml)
@@ -88,6 +89,9 @@ void checkIrrigationSchedule(void);
 void checkMoistureThresholds(void);
 void sendIrrigationCommand(String zoneId, int durationSeconds);
 void checkIrrigationTimer(void);
+
+// Affichage capteurs par zone
+void displaySensorIdsPerZone(void);
 
 // Utilitaires
 String generateHMAC(String data);

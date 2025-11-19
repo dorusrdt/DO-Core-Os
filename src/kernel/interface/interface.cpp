@@ -239,14 +239,12 @@ SysError_t interface_init(void) {
 
     // Commandes Irrigation Configuration
     add_command("irrig_config_server", "Configure FastAPI server URL", cmd_irrig_config_server);
-    add_command("irrig_config_master", "Configure Master device IP/port", cmd_irrig_config_master);
-    add_command("irrig_config_slave1", "Configure Slave1 (Sensors) IP/port", cmd_irrig_config_slave1);
-    add_command("irrig_config_slave2", "Configure Slave2 (Relays) IP/port", cmd_irrig_config_slave2);
+    // Note: irrig_config_master/slave1/slave2 removed - MAC addresses are now hardcoded
     add_command("irrig_config_show", "Show current configuration", cmd_irrig_config_show);
     add_command("irrig_config_save", "Save configuration to NVS", cmd_irrig_config_save);
     add_command("irrig_config_load", "Load configuration from NVS", cmd_irrig_config_load);
     add_command("irrig_config_reset", "Reset configuration to defaults", cmd_irrig_config_reset);
-    
+
     // Commandes Irrigation Role Management
     add_command("irrig_set_role", "Set device role (master/slave1/slave2)", cmd_irrig_set_role);
     add_command("irrig_get_role", "Show current device role", cmd_irrig_get_role);

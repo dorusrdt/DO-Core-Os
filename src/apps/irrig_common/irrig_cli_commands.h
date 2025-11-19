@@ -10,20 +10,8 @@
 // Exemple: irrig_config_server http://192.168.1.100:8000
 SysError_t cmd_irrig_config_server(int argc, char* argv[]);
 
-// Commande pour configurer l'URL du Master (Slaves → Master)
-// Usage: irrig_config_master <ip> <port>
-// Exemple: irrig_config_master 192.168.1.101 8080
-SysError_t cmd_irrig_config_master(int argc, char* argv[]);
-
-// Commande pour configurer l'URL du Slave1 (Master → Slave1)
-// Usage: irrig_config_slave1 <ip> <port>
-// Exemple: irrig_config_slave1 192.168.1.102 8081
-SysError_t cmd_irrig_config_slave1(int argc, char* argv[]);
-
-// Commande pour configurer l'URL du Slave2 (Master → Slave2)
-// Usage: irrig_config_slave2 <ip> <port>
-// Exemple: irrig_config_slave2 192.168.1.103 8082
-SysError_t cmd_irrig_config_slave2(int argc, char* argv[]);
+// Note: Commandes irrig_config_master/slave1/slave2 supprimées
+// Les MAC addresses sont maintenant codées en dur dans main.cpp
 
 // Commande pour afficher la configuration actuelle
 // Usage: irrig_config_show

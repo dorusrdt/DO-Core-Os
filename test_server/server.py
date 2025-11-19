@@ -115,7 +115,7 @@ async def register_device(
     print(f"   Capacity: {request.capacity.zones} zones, {request.capacity.sensors} sensors")
     print(f"   Timestamp: {request.timestamp}")
     print(f"   Signature: {x_signature}")
-    
+
     # Enregistrer le device
     registered_devices[request.deviceId] = {
         "deviceId": request.deviceId,
@@ -124,17 +124,17 @@ async def register_device(
         "lastSeen": datetime.now().isoformat(),
         "status": "online"
     }
-    
+
     # Initialiser les zones vides
     if request.deviceId not in device_zones:
         device_zones[request.deviceId] = []
-    
+
     # Initialiser les commandes vides
     if request.deviceId not in pending_commands:
         pending_commands[request.deviceId] = []
-    
+
     print(f"   ✅ Device registered successfully")
-    
+
     return {
         "status": "registered",
         "deviceId": request.deviceId,
@@ -162,13 +162,13 @@ async def receive_sensor_data(
     print(f"      Pressure: {request.globalData.pressure} hPa")
     print(f"      Battery: {request.globalData.batteryLevel}%")
     print(f"      Signal: {request.globalData.signalStrength} dBm")
-    
+
     print(f"   Zones Data: {len(request.zonesData)} zones")
     for zone in request.zonesData:
         print(f"      Zone {zone.zoneId}: {len(zone.soilMoisture)} sensors")
         for sensor in zone.soilMoisture:
             print(f"         {sensor.sensorId}: {sensor.value:.1f}%")
-    
+
     # Stocker dans l'historique
     sensor_data_history.append({
         "deviceId": request.deviceId,
@@ -177,17 +177,17 @@ async def receive_sensor_data(
         "zonesData": [z.model_dump() for z in request.zonesData],
         "receivedAt": datetime.now().isoformat()
     })
-    
+
     # Limiter l'historique à 100 entrées
     if len(sensor_data_history) > 100:
         sensor_data_history.pop(0)
-    
+
     # Mettre à jour lastSeen
     if request.deviceId in registered_devices:
         registered_devices[request.deviceId]["lastSeen"] = datetime.now().isoformat()
-    
+
     print(f"   ✅ Data stored successfully")
-    
+
     return {
         "status": "received",
         "message": "Sensor data received successfully",
@@ -207,35 +207,35 @@ async def get_device_config(
     print(f"\n⚙️  CONFIG REQUEST")
     print(f"   Device ID: {device_id}")
     print(f"   Signature: {x_signature}")
-    
+
     # Vérifier si le device est enregistré
     if device_id not in registered_devices:
         print(f"   ❌ Device not registered")
         raise HTTPException(status_code=404, detail="Device not registered")
-    
+
     # Récupérer les zones configurées
     zones = device_zones.get(device_id, [])
-    
+
     # Récupérer les commandes en attente
     commands = pending_commands.get(device_id, [])
-    
+
     print(f"   Zones configured: {len(zones)}")
     for zone in zones:
         print(f"      {zone['zoneId']}: {zone['waterPerDay']}ml/day, {zone['irrigationTime']}, {zone['humidityThreshold']}%")
-    
+
     print(f"   Pending commands: {len(commands)}")
     for cmd in commands:
         print(f"      {cmd['action']}: {cmd.get('zoneId', 'N/A')}")
-    
+
     # Vider les commandes après envoi
     if commands:
         pending_commands[device_id] = []
-    
+
     # Mettre à jour lastSeen
     registered_devices[device_id]["lastSeen"] = datetime.now().isoformat()
-    
+
     print(f"   ✅ Config sent successfully")
-    
+
     return {
         "type": "config",
         "zones": zones,
@@ -257,7 +257,7 @@ async def get_device_info(device_id: str):
     """Informations détaillées sur un device"""
     if device_id not in registered_devices:
         raise HTTPException(status_code=404, detail="Device not found")
-    
+
     return {
         "device": registered_devices[device_id],
         "zones": device_zones.get(device_id, []),
@@ -277,14 +277,14 @@ async def add_zone(device_id: str, zone: ZoneConfig):
     print(f"   Time: {zone.irrigationTime}")
     print(f"   Threshold: {zone.humidityThreshold}%")
     print(f"   Sensors: {len(zone.sensors)}")
-    
+
     if device_id not in registered_devices:
         raise HTTPException(status_code=404, detail="Device not registered")
-    
+
     # Vérifier si la zone existe déjà
     zones = device_zones.get(device_id, [])
     existing_zone = next((z for z in zones if z["zoneId"] == zone.zoneId), None)
-    
+
     if existing_zone:
         # Mettre à jour la zone existante
         existing_zone.update(zone.model_dump())
@@ -294,7 +294,7 @@ async def add_zone(device_id: str, zone: ZoneConfig):
         zones.append(zone.model_dump())
         device_zones[device_id] = zones
         print(f"   ✅ Zone added")
-    
+
     return {
         "status": "success",
         "message": f"Zone {zone.zoneId} configured",
@@ -310,26 +310,26 @@ async def delete_zone(device_id: str, zone_id: str):
     print(f"\n🗑️  DELETE ZONE")
     print(f"   Device ID: {device_id}")
     print(f"   Zone ID: {zone_id}")
-    
+
     if device_id not in registered_devices:
         raise HTTPException(status_code=404, detail="Device not registered")
-    
+
     # Retirer la zone de la configuration
     zones = device_zones.get(device_id, [])
     zones = [z for z in zones if z["zoneId"] != zone_id]
     device_zones[device_id] = zones
-    
+
     # Ajouter commande delete_zone
     if device_id not in pending_commands:
         pending_commands[device_id] = []
-    
+
     pending_commands[device_id].append({
         "action": "delete_zone",
         "zoneId": zone_id
     })
-    
+
     print(f"   ✅ Zone deleted, command queued")
-    
+
     return {
         "status": "success",
         "message": f"Zone {zone_id} deleted, command sent to device",
@@ -351,10 +351,10 @@ async def get_sensor_history(limit: int = 10):
 async def get_latest_sensor_data(device_id: str):
     """Récupérer les dernières données capteurs d'un device"""
     device_data = [d for d in sensor_data_history if d["deviceId"] == device_id]
-    
+
     if not device_data:
         raise HTTPException(status_code=404, detail="No data found for this device")
-    
+
     return device_data[-1]
 
 @app.delete("/api/devices/{device_id}")
@@ -362,20 +362,20 @@ async def unregister_device(device_id: str):
     """Désenregistrer un device"""
     if device_id not in registered_devices:
         raise HTTPException(status_code=404, detail="Device not found")
-    
+
     # Supprimer le device
     del registered_devices[device_id]
-    
+
     # Supprimer ses zones
     if device_id in device_zones:
         del device_zones[device_id]
-    
+
     # Supprimer ses commandes
     if device_id in pending_commands:
         del pending_commands[device_id]
-    
+
     print(f"\n🗑️  Device {device_id} unregistered")
-    
+
     return {
         "status": "success",
         "message": f"Device {device_id} unregistered"
@@ -399,7 +399,7 @@ async def test_create_zone(device_id: str = "ESP32_IRRIGATION_11100454456464674"
             SensorConfig(sensorId="s_03")
         ]
     )
-    
+
     return await add_zone(device_id, test_zone)
 
 # ===== DÉMARRAGE =====
@@ -410,13 +410,13 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"📍 Host: 192.168.1.3")
     print(f"🔌 Port: 3000")
-    print(f"📚 Docs: http://192.168.1.3:3000/docs")
-    print(f"🔍 Health: http://192.168.1.3:3000/api/health")
+    print(f"📚 Docs: http://192.168.1.72:3000/docs")
+    print(f"🔍 Health: http://192.168.1.72:3000/api/health")
     print("=" * 60)
-    
+
     uvicorn.run(
         app,
-        host="192.168.1.3",
+        host="192.168.1.72",
         port=3000,
         log_level="info"
     )

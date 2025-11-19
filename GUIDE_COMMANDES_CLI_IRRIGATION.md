@@ -42,7 +42,7 @@ Ce guide explique comment utiliser les commandes CLI pour configurer les URLs de
 
 ## 📋 Liste des Commandes
 
-### 1. **irrig_config_server** - Configurer l'URL du serveur FastAPI
+### 1. **irrig_co1fig_server** - Configurer l'URL du serveur FastAPI
 
 **Usage** :
 ```bash

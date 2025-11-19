@@ -99,9 +99,7 @@ SysError_t cmd_time_sources(int argc, char* argv[]);
 
 // Commandes Irrigation Configuration
 SysError_t cmd_irrig_config_server(int argc, char* argv[]);
-SysError_t cmd_irrig_config_master(int argc, char* argv[]);
-SysError_t cmd_irrig_config_slave1(int argc, char* argv[]);
-SysError_t cmd_irrig_config_slave2(int argc, char* argv[]);
+// Note: cmd_irrig_config_master/slave1/slave2 removed - MAC addresses are now hardcoded
 SysError_t cmd_irrig_config_show(int argc, char* argv[]);
 SysError_t cmd_irrig_config_save(int argc, char* argv[]);
 SysError_t cmd_irrig_config_load(int argc, char* argv[]);

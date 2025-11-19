@@ -24,10 +24,10 @@
 #define MOISTURE_PIN_12 13
 
 // Pins relais
-#define ZONE_1_RELAY_PIN 15  // Déplacé de GPIO 2 → 15 (GPIO 2 réservé pour heartbeat)
+#define ZONE_1_RELAY_PIN 15  // Déplacé de GPIO 2 → 15 (GPIO 2 réservé poconur heartbeat)
 #define ZONE_2_RELAY_PIN 4
-#define ZONE_3_RELAY_PIN 16
-#define ZONE_4_RELAY_PIN 17
+#define ZONE_3_RELAY_PIN 18
+#define ZONE_4_RELAY_PIN 19
 #define PUMP_RELAY_PIN   5
 
 // Pins indicateurs

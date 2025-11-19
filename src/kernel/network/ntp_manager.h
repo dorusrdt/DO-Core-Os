@@ -7,7 +7,7 @@
 
 // Configuration NTP simple
 #define NTP_SERVER "pool.ntp.org"
-#define NTP_GMT_OFFSET_SEC 0  // UTC+1 (Maroc - WET/WEST) CORRIGÉ
+#define NTP_GMT_OFFSET_SEC 3600  // UTC+1 (Maroc - WET/WEST) CORRIGÉ
 #define NTP_DAYLIGHT_OFFSET_SEC 3600  // +1 heure en été (WEST)
 
 // États de synchronisation NTP
@@ -70,4 +70,4 @@ uint8_t ntp_get_second(void);
 }
 #endif
 
-#endif // NTP_MANAGER_H 
+#endif // NTP_MANAGER_H
