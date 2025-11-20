@@ -21,28 +21,15 @@
 #include "kernel/hal/rtc_manager.h"
 #include "kernel/hal/time_sync_manager.h"
 #include "kernel/hal/heartbeat_led.h"
-#include "apps/irrig_app_master/irrig_app_master.h"
-#include "apps/irrig_app_master/irrig_app_master_http.h"
-#include "apps/irrig_app_slave_sensors/irrig_app_slave_sensors.h"
-#include "apps/irrig_app_slave_relays/irrig_app_slave_relays.h"
-#include "apps/irrig_common/irrig_communication.h"
-#include "apps/irrig_common/irrig_cli_commands.h"
 #include <time.h>
+
+// Apps ESP-NOW Master/Slave
+#include "apps/espnow_master/espnow_master.h"
+#include "apps/espnow_slave/espnow_slave.h"
 
 // Variables globales du système
 static bool system_initialized = false;
 volatile bool system_running = false;
-
-// IDs des apps enregistrées
-static uint8_t g_master_app_id = 0;
-static uint8_t g_slave1_app_id = 0;
-static uint8_t g_slave2_app_id = 0;
-
-// Données capteurs reçues (pour Master)
-static float g_received_moisture[12];
-static float g_received_temperature = 0;
-static float g_received_humidity = 0;
-static float g_received_pressure = 0;
 
 // Système de stockage persistant des credentials WiFi
 static Preferences wifi_prefs;
@@ -160,8 +147,8 @@ SysError_t connect_to_wifi(const char* ssid, const char* password) {
     WiFi.begin(ssid, password);
 
     // Attendre la connexion avec timeout configurable
-    const int max_attempts = 30; // 15 secondes au lieu de 10
-    const int attempt_delay = 500; // 500ms entre les tentatives
+    const int max_attempts = 30;
+    const int attempt_delay = 500;
 
     int attempts = 0;
     wl_status_t last_status = WL_IDLE_STATUS;
@@ -230,13 +217,13 @@ SysError_t connect_to_wifi(const char* ssid, const char* password) {
     }
 }
 
-// Tâche principale du système (simplifiée)
+// Tâche principale du système
 void system_main_task(void* parameter) {
     SERIAL_PRINTLN_MINIMAL("Main task start");
 
     int main_counter = 0;
     while (system_running) {
-        if (main_counter % 300 == 0) { // Toutes les 5 minutes au lieu de 30 secondes
+        if (main_counter % 300 == 0) {
             kernel_log(LOG_LEVEL_INFO, "System - Run: %d, Heap: %lu",
                          main_counter, esp_get_free_heap_size());
         }
@@ -259,7 +246,6 @@ void time_sync_task(void* parameter) {
 
     while (system_running) {
         // Vérifier si une synchronisation immédiate est demandée
-        // ou si l'intervalle normal est écoulé
         bool immediate_requested = time_sync_is_immediate_requested();
         bool should_sync = (elapsed_ms >= sync_interval_ms) || immediate_requested;
 
@@ -292,7 +278,7 @@ void time_sync_task(void* parameter) {
     vTaskDelete(NULL);
 }
 
-// Tâche de surveillance WiFi (optimisée)
+// Tâche de surveillance WiFi
 void wifi_supervision_task(void* parameter) {
     kernel_log(LOG_LEVEL_INFO, "WiFi task start");
 
@@ -306,7 +292,7 @@ void wifi_supervision_task(void* parameter) {
         bool is_connected = (WiFi.status() == WL_CONNECTED);
         int current_rssi = is_connected ? WiFi.RSSI() : 0;
 
-        // Détecter les changements de statut (toujours loggé)
+        // Détecter les changements de statut
         if (is_connected != was_connected) {
             if (is_connected) {
                 kernel_log(LOG_LEVEL_INFO, "WiFi CON - IP: %s, RSSI: %d",
@@ -332,11 +318,11 @@ void wifi_supervision_task(void* parameter) {
                 }
             }
             was_connected = is_connected;
-            reconnect_attempts = 0; // Reset counter on status change
+            reconnect_attempts = 0;
         }
 
         // Log périodique du statut (toutes les 30 minutes)
-        if (supervision_counter % 1800 == 0) { // Toutes les 30 minutes au lieu de 10
+        if (supervision_counter % 1800 == 0) {
             if (is_connected) {
                 kernel_log(LOG_LEVEL_INFO, "WiFi - Status: CON, RSSI: %d, IP: %s",
                           current_rssi, WiFi.localIP().toString().c_str());
@@ -345,27 +331,25 @@ void wifi_supervision_task(void* parameter) {
             }
         }
 
-        // Vérifier la qualité du signal (warning si faible, mais moins fréquent)
+        // Vérifier la qualité du signal
         if (is_connected && current_rssi < -80) {
             weak_signal_counter++;
 
-            // Log seulement toutes les 15 minutes pour éviter le spam
-            if (weak_signal_counter % 900 == 0) { // Toutes les 15 minutes au lieu de 5
+            if (weak_signal_counter % 900 == 0) {
                 kernel_log(LOG_LEVEL_WARN, "WiFi - Weak signal: %d dBm", current_rssi);
             }
         } else {
-            weak_signal_counter = 0; // Reset counter when signal is good
+            weak_signal_counter = 0;
         }
 
-        // Détecter les changements significatifs de RSSI (seulement si très important)
-        if (is_connected && abs(current_rssi - last_rssi) > 20) { // Augmenté de 10 à 20 dBm
-            // Log seulement toutes les 5 minutes pour éviter le spam
+        // Détecter les changements significatifs de RSSI
+        if (is_connected && abs(current_rssi - last_rssi) > 20) {
             static int rssi_log_counter = 0;
             rssi_log_counter++;
 
-            if (rssi_log_counter % 300 == 0) { // Toutes les 5 minutes
+            if (rssi_log_counter % 300 == 0) {
                 kernel_log(LOG_LEVEL_INFO, "RSSI change: %d -> %d", last_rssi, current_rssi);
-                rssi_log_counter = 0; // Reset counter
+                rssi_log_counter = 0;
             }
             last_rssi = current_rssi;
         }
@@ -374,18 +358,18 @@ void wifi_supervision_task(void* parameter) {
         if (!is_connected && load_wifi_credentials()) {
             reconnect_attempts++;
 
-            if (reconnect_attempts % 60 == 0) { // Toutes les 60 secondes au lieu de 30
+            if (reconnect_attempts % 60 == 0) {
                 kernel_log(LOG_LEVEL_INFO, "Reconnect %d", reconnect_attempts / 60);
                 WiFi.disconnect();
                 delay(1000);
                 WiFi.begin(get_stored_ssid(), get_stored_password());
             }
         } else if (is_connected) {
-            reconnect_attempts = 0; // Reset counter when connected
+            reconnect_attempts = 0;
         }
 
         supervision_counter++;
-        vTaskDelay(pdMS_TO_TICKS(1000)); // 1 seconde
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     kernel_log(LOG_LEVEL_INFO, "WiFi task stop");
@@ -393,56 +377,14 @@ void wifi_supervision_task(void* parameter) {
 }
 
 // Fonction d'affichage du logo système style neofetch
-// ===== CALLBACKS POUR MASTER HTTP =====
-
-void on_sensor_data_received(SensorDataPacket_t* data) {
-    if (!data) return;
-
-    // ✅ Afficher réception données Slave1 (UNIQUEMENT humidité)
-    kernel_log(LOG_LEVEL_INFO, "📥 Slave1 → Master: Moisture data received");
-    kernel_log(LOG_LEVEL_DEBUG, "   Timestamp: %lu | Sensors: %d values", data->timestamp, MAX_SENSORS);
-
-    // Copier données humidité
-    for (int i = 0; i < 12; i++) {
-        g_received_moisture[i] = data->moisture[i];
-    }
-
-    // ✅ Appeler fonction Master qui va GÉNÉRER les données globales
-    updateSensorDataFromSlave(data->moisture, data->temperature, data->humidity, data->pressure);
-
-    // ✅ Les données globales sont maintenant générées par Master
-    // (voir updateGlobalEnvironmentData() dans irrig_app_master.cpp)
-}
-
-void on_irrigation_status_received(IrrigationStatusPacket_t* status) {
-    if (!status) return;
-
-    kernel_log(LOG_LEVEL_DEBUG, "Master: Received irrigation status from Slave2");
-    kernel_log(LOG_LEVEL_DEBUG, "  Zone: %d, Irrigating: %s, Remaining: %lus",
-               status->zone_id, status->is_irrigating ? "YES" : "NO", status->remaining_seconds);
-}
-
-// Callback pour les slaves (recevoir commandes du Master)
-void on_command_received_slave(IrrigationCommandPacket_t* cmd) {
-    if (!cmd) return;
-    kernel_log(LOG_LEVEL_INFO, "📥 SLAVE: Command received - Type: %d, Zone: %d, Duration: %ds",
-              cmd->command, cmd->zone_id, cmd->duration_seconds);
-
-    // Ici tu peux ajouter le traitement spécifique selon le rôle
-    // Pour Slave1: lire capteurs et envoyer données
-    // Pour Slave2: contrôler les relais
-}
-
-// ===== LOGO SYSTÈME =====
-
 void display_system_logo() {
     Serial.println();
-    Serial.println("        ██████╗ ██ ██████╗      OS: D'O-CORE v" DO_CORE_VERSION " \"IRRIG Distro\"");
+    Serial.println("        ██████╗ ██ ██████╗      OS: D'O-CORE v" DO_CORE_VERSION);
     Serial.println("        ██╔══██╗ ██╔═══██╗      Host: ESP32 DevKit");
     Serial.println("        ██║  ██║ ██║   ██║      Kernel: ESP-IDF");
 
     // Calculer l'uptime
-    uint32_t uptime_seconds = system_monitor_get_uptime(); // Utiliser la fonction du système de monitoring
+    uint32_t uptime_seconds = system_monitor_get_uptime();
     uint32_t hours = uptime_seconds / 3600;
     uint32_t minutes = (uptime_seconds % 3600) / 60;
     uint32_t seconds = uptime_seconds % 60;
@@ -460,7 +402,7 @@ void display_system_logo() {
     Serial.printf("                                Memory: %luMB / %luMB\n", used_heap/1024, total_heap/1024);
 
     // Santé du système
-    String system_health = system_monitor_is_system_healthy() ? "HEALTHY" : "UNHEALTHY"; // Utiliser la fonction du système de monitoring
+    String system_health = system_monitor_is_system_healthy() ? "HEALTHY" : "UNHEALTHY";
     Serial.printf("                                System Health: %s\n", system_health.c_str());
 
     // Statut WiFi
@@ -492,7 +434,7 @@ void display_system_logo() {
                   timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
     Serial.println();
-    Serial.printf("       v%s \"IRRIG Distro OTA chg\"\n", DO_CORE_VERSION);
+    Serial.printf("       v%s\n", DO_CORE_VERSION);
     Serial.println();
 }
 
@@ -510,7 +452,6 @@ void setup() {
     SERIAL_PRINTLN_MINIMAL("NVS init...");
     esp_err_t nvs_ret = nvs_flash_init();
     if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // NVS partition was truncated and needs to be erased
         ESP_ERROR_CHECK(nvs_flash_erase());
         nvs_ret = nvs_flash_init();
     }
@@ -573,12 +514,12 @@ void setup() {
     }
     SERIAL_PRINTLN_MINIMAL("HTTP Client OK");
 
-    // Initialiser le heartbeat LED (dès le début)
+    // Initialiser le heartbeat LED
     SERIAL_PRINTLN_MINIMAL("Heartbeat init...");
     heartbeat_init();
     heartbeat_set_state(HEARTBEAT_BOOTING);
 
-    // Créer la tâche heartbeat immédiatement pour voir le pattern de boot
+    // Créer la tâche heartbeat immédiatement
     uint8_t heartbeat_task_id;
     result = task_create_pinned_to_core("Heartbeat", heartbeat_task, NULL,
                                        PRIORITY_LOW, STACK_SIZE_SMALL, 0, &heartbeat_task_id);
@@ -592,7 +533,7 @@ void setup() {
     SERIAL_PRINTLN_MINIMAL("Log system init...");
     log_system_init();
     kernel_log(LOG_LEVEL_INFO, "=== D'O-Core OS Starting ===");
-    kernel_log(LOG_LEVEL_INFO, "Version: 1.0.0");
+    kernel_log(LOG_LEVEL_INFO, "Version: %s", DO_CORE_VERSION);
     kernel_log(LOG_LEVEL_INFO, "Build: %s %s", __DATE__, __TIME__);
 
     // Initialiser le module OTA
@@ -602,7 +543,6 @@ void setup() {
     if (ota_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL("OTA Manager fail");
         kernel_log(LOG_LEVEL_ERROR, "OTA Manager init failed");
-        // Continue sans OTA (mode dégradé)
     } else {
         SERIAL_PRINTLN_MINIMAL("OTA Manager OK");
         kernel_log(LOG_LEVEL_INFO, "OTA Manager initialized successfully");
@@ -614,7 +554,6 @@ void setup() {
     if (rtc_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL("RTC fail");
         kernel_log(LOG_LEVEL_ERROR, "RTC Manager initialization failed");
-        // Continuer sans RTC (mode dégradé)
     } else {
         SERIAL_PRINTLN_MINIMAL("RTC OK");
         kernel_log(LOG_LEVEL_INFO, "RTC Manager initialized successfully");
@@ -630,13 +569,22 @@ void setup() {
     }
     SERIAL_PRINTLN_MINIMAL("Time sync OK");
 
-    // Network initialization complete
-
     // Initialiser le gestionnaire d'applications
     SysError_t app_result = app_manager_init();
     if (app_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL(MSG_APP_FAIL);
         return;
+    }
+
+    // Enregistrer les applications Master et Slave (même firmware)
+    {
+        SysError_t r1 = espnow_master_register_app();
+        SysError_t r2 = espnow_slave_register_app();
+        if (r1 == SYS_OK && r2 == SYS_OK) {
+            kernel_log(LOG_LEVEL_INFO, "Registered apps: espnow_master(id=%d), espnow_slave(id=%d)", ESPNOW_MASTER_APP_ID, ESPNOW_SLAVE_APP_ID);
+        } else {
+            kernel_log(LOG_LEVEL_ERROR, "Failed to register espnow apps (master=%d, slave=%d)", r1, r2);
+        }
     }
 
     // Initialiser le WiFi (sans connexion automatique)
@@ -656,279 +604,30 @@ void setup() {
         if (connect_to_wifi(get_stored_ssid(), get_stored_password()) == SYS_OK) {
             SERIAL_PRINTLN_MINIMAL("WiFi OK");
             kernel_log(LOG_LEVEL_INFO, "WiFi auto OK");
-            heartbeat_set_state(HEARTBEAT_READY);  // WiFi connecté
+            heartbeat_set_state(HEARTBEAT_READY);
         } else {
             SERIAL_PRINTLN_MINIMAL(MSG_WIFI_FAIL);
             SERIAL_PRINTLN_MINIMAL("Use 'wifi_save' to update");
             kernel_log(LOG_LEVEL_ERROR, MSG_WIFI_FAIL);
-            heartbeat_set_state(HEARTBEAT_WIFI_ERROR);  // WiFi échoué
+            heartbeat_set_state(HEARTBEAT_WIFI_ERROR);
         }
     } else {
         SERIAL_PRINTLN_MINIMAL("No saved creds");
         kernel_log(LOG_LEVEL_INFO, "No saved creds");
         SERIAL_PRINTLN_MINIMAL("Use 'wifi_save' to save");
-        heartbeat_set_state(HEARTBEAT_WIFI_ERROR);  // Pas de WiFi
+        heartbeat_set_state(HEARTBEAT_WIFI_ERROR);
     }
 
     SERIAL_PRINTF_MINIMAL("Heap after WiFi: %lu\n", esp_get_free_heap_size());
 
-    // Initialiser l'interface (simplifiée)
+    // Initialiser l'interface
     SysError_t interface_result = interface_init();
     if (interface_result != SYS_OK) {
         SERIAL_PRINTLN_MINIMAL("Interface fail");
         return;
     }
 
-    // ===== INITIALISER COMMUNICATION ESP-NOW =====
-    SERIAL_PRINTLN_MINIMAL("Init ESP-NOW comm...");
-
-    // Obtenir MAC locale
-    uint8_t local_mac[6];
-    esp_read_mac(local_mac, ESP_MAC_WIFI_STA);
-
-    // ===== CONFIGURATION EN DUR POUR TEST =====
-    // MAC addresses codées en dur pour test Master ↔ Slave1
-    IrrigCommConfig_t comm_config;
-
-    // MAC locale (ce device)
-    memcpy(comm_config.local_mac, local_mac, 6);
-
-    // MAC Master (codée en dur)
-    uint8_t master_mac_hardcoded[6] = {0x5C, 0x01, 0x3B, 0x4D, 0x65, 0x68};
-    memcpy(comm_config.master_mac, master_mac_hardcoded, 6);
-
-    // MAC Slave1 (codée en dur)
-    uint8_t slave1_mac_hardcoded[6] = {0x00, 0x4B, 0x12, 0x2C, 0x6D, 0xEC};
-    memcpy(comm_config.slave1_mac, slave1_mac_hardcoded, 6);
-
-    // Pour Slave1/Slave2 : forcer le canal WiFi même sans connexion
-    #if defined(DEVICE_ROLE_SLAVE1) || defined(DEVICE_ROLE_SLAVE2)
-    // Forcer le canal WiFi pour ESP-NOW (même sans connexion WiFi)
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-    kernel_log(LOG_LEVEL_INFO, "SLAVE: Forced WiFi channel to 1 for ESP-NOW BEFORE init");
-    #endif
-
-    // MAC Slave2 (temporaire, même que local pour test)
-    memcpy(comm_config.slave2_mac, local_mac, 6);
-
-    // Configuration retry
-    comm_config.send_timeout_ms = 1000;
-    comm_config.retry_count = 3;
-    comm_config.retry_delay_ms = 100;
-
-    // Canal WiFi selon le rôle
-    #ifdef DEVICE_ROLE_MASTER
-    comm_config.wifi_channel = 0;  // Master: auto (utilise canal WiFi)
-    #else
-    comm_config.wifi_channel = 1;  // Slaves: canal fixe 1
-    #endif
-
-    // ===== LOGS DÉTAILLÉS CANAL WIFI =====
-    SERIAL_PRINTLN_MINIMAL("=== WiFi Channel Detection ===");
-    if (WiFi.status() == WL_CONNECTED) {
-        uint8_t wifi_ch = WiFi.channel();
-        SERIAL_PRINTF_MINIMAL("WiFi Status: CONNECTED\n");
-        SERIAL_PRINTF_MINIMAL("WiFi Channel: %d\n", wifi_ch);
-        SERIAL_PRINTF_MINIMAL("WiFi SSID: %s\n", WiFi.SSID().c_str());
-        SERIAL_PRINTF_MINIMAL("WiFi IP: %s\n", WiFi.localIP().toString().c_str());
-        kernel_log(LOG_LEVEL_INFO, "WiFi Channel Detection: CONNECTED on channel %d", wifi_ch);
-    } else {
-        SERIAL_PRINTLN_MINIMAL("WiFi Status: NOT CONNECTED");
-        SERIAL_PRINTLN_MINIMAL("WiFi Channel: Will use auto (0)");
-        kernel_log(LOG_LEVEL_INFO, "WiFi Channel Detection: NOT CONNECTED, will use auto channel");
-    }
-    SERIAL_PRINTLN_MINIMAL("===============================");
-
-    // Afficher MAC addresses
-    SERIAL_PRINTLN_MINIMAL("=== MAC Addresses (Hardcoded) ===");
-    SERIAL_PRINTF_MINIMAL("Local MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                          local_mac[0], local_mac[1], local_mac[2],
-                          local_mac[3], local_mac[4], local_mac[5]);
-    SERIAL_PRINTF_MINIMAL("Master MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                          comm_config.master_mac[0], comm_config.master_mac[1],
-                          comm_config.master_mac[2], comm_config.master_mac[3],
-                          comm_config.master_mac[4], comm_config.master_mac[5]);
-    SERIAL_PRINTF_MINIMAL("Slave1 MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                          comm_config.slave1_mac[0], comm_config.slave1_mac[1],
-                          comm_config.slave1_mac[2], comm_config.slave1_mac[3],
-                          comm_config.slave1_mac[4], comm_config.slave1_mac[5]);
-
-    // ===== VERSION SIMPLIFIÉE : RÔLES CODÉS EN DUR =====
-    // Décommenter UNE SEULE ligne selon le device que vous voulez tester
-
-    //#define DEVICE_ROLE_MASTER     // Pour tester le Master
-     #define DEVICE_ROLE_SLAVE1   // Pour tester le Slave1 (Sensors)
-    // #define DEVICE_ROLE_SLAVE2   // Pour tester le Slave2 (Relays)
-
-    #ifdef DEVICE_ROLE_MASTER
-        SERIAL_PRINTLN_MINIMAL("Device Role: MASTER (HARDCODED)");
-    #elif defined(DEVICE_ROLE_SLAVE1)
-        SERIAL_PRINTLN_MINIMAL("Device Role: SLAVE1 (HARDCODED)");
-        // Forcer le canal WiFi pour ESP-NOW AVANT l'initialisation
-        esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-        kernel_log(LOG_LEVEL_INFO, "SLAVE1: Forced WiFi channel to 1 BEFORE ESP-NOW init");
-    #elif defined(DEVICE_ROLE_SLAVE2)
-        SERIAL_PRINTLN_MINIMAL("Device Role: SLAVE2 (HARDCODED)");
-        // Forcer le canal WiFi pour ESP-NOW AVANT l'initialisation
-        esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-        kernel_log(LOG_LEVEL_INFO, "SLAVE2: Forced WiFi channel to 1 BEFORE ESP-NOW init");
-    #else
-        SERIAL_PRINTLN_MINIMAL("❌ ERROR: No device role defined!");
-        SERIAL_PRINTLN_MINIMAL("   Uncomment one #define line above");
-    #endif
-
-    SERIAL_PRINTLN_MINIMAL("===================================");
-
-    SysError_t comm_result = irrig_comm_init(&comm_config);
-    if (comm_result == SYS_OK) {
-        SERIAL_PRINTLN_MINIMAL("ESP-NOW comm OK");
-        kernel_log(LOG_LEVEL_INFO, "ESP-NOW communication initialized");
-    } else {
-        SERIAL_PRINTLN_MINIMAL("ESP-NOW comm FAIL");
-        kernel_log(LOG_LEVEL_ERROR, "ESP-NOW communication init failed");
-    }
-
-    // Charger configuration depuis NVS (écrase les valeurs par défaut si sauvegardées)
-    SERIAL_PRINTLN_MINIMAL("Load config...");
-    cmd_irrig_config_load(0, NULL);
-
-    // ===== ENREGISTRER LES 3 APPS =====
-    SERIAL_PRINTLN_MINIMAL("Registering apps...");
-
-    // 1. Master App (ID: 1)
-    IrrigAppConfig_t irrig_config;
-
-    // Utiliser l'URL configurée via CLI, sinon valeur par défaut
-    const char* configured_url = irrig_cli_get_server_url();
-    if (configured_url != NULL && strlen(configured_url) > 0) {
-        strcpy(irrig_config.server_url, configured_url);
-        kernel_log(LOG_LEVEL_INFO, "Using configured server URL: %s", configured_url);
-    } else {
-        strcpy(irrig_config.server_url, "http://10.232.133.53:3000");
-        kernel_log(LOG_LEVEL_WARN, "Using default server URL (not configured)");
-    }
-
-    strcpy(irrig_config.device_id, "ESP32_IRRIGATION_11100454456464674");
-    strcpy(irrig_config.device_secret, "esp32-secure-key-2024");
-    irrig_config.poll_interval_seconds = 10;
-    irrig_config.sensor_read_interval_seconds = 5;
-    irrig_config.data_send_interval_seconds = 15;
-    irrig_config.max_zones = 4;
-    irrig_config.max_sensors = 12;
-    irrig_config.simulation_mode = true;
-
-    SysError_t irrig_result = register_irrig_app_master(&irrig_config);
-    if (irrig_result == SYS_OK) {
-        g_master_app_id = 1;
-        SERIAL_PRINTLN_MINIMAL("✓ Master (ID:1)");
-        kernel_log(LOG_LEVEL_INFO, "Master app registered (ID: 1)");
-    } else {
-        SERIAL_PRINTLN_MINIMAL("✗ Master fail");
-        kernel_log(LOG_LEVEL_ERROR, "Failed to register Master app");
-    }
-
-    // 2. Slave Sensors App (ID: 2)
-    IrrigSensorConfig_t sensor_config = {
-        .simulation_mode = false,
-        .read_interval_ms = 5000,
-        .samples_per_read = 5,
-        .enable_http_server = true,
-        .http_server_port = 8081
-    };
-
-    SysError_t sensor_result = register_irrig_app_slave_sensors(&sensor_config);
-    if (sensor_result == SYS_OK) {
-        g_slave1_app_id = 2;
-        SERIAL_PRINTLN_MINIMAL("✓ Slave1 (ID:2)");
-        kernel_log(LOG_LEVEL_INFO, "Slave Sensors app registered (ID: 2)");
-    } else {
-        SERIAL_PRINTLN_MINIMAL("✗ Slave1 fail");
-        kernel_log(LOG_LEVEL_ERROR, "Failed to register Slave Sensors app");
-    }
-
-    // 3. Slave Relays App (ID: 3)
-    IrrigRelayConfig_t relay_config = {
-        .safety_timeout_ms = 3600000,  // 1 heure en millisecondes
-        .enable_http_server = true,
-        .http_server_port = 8082,
-        .status_publish_interval_ms = 10000
-    };
-
-    SysError_t relay_result = register_irrig_app_slave_relays(&relay_config);
-    if (relay_result == SYS_OK) {
-        g_slave2_app_id = 3;
-        SERIAL_PRINTLN_MINIMAL("✓ Slave2 (ID:3)");
-        kernel_log(LOG_LEVEL_INFO, "Slave Relays app registered (ID: 3)");
-    } else {
-        SERIAL_PRINTLN_MINIMAL("✗ Slave2 fail");
-        kernel_log(LOG_LEVEL_ERROR, "Failed to register Slave Relays app");
-    }
-
-    // ===== DÉMARRER LES APPS ET ENREGISTRER LES CALLBACKS SELON LE RÔLE =====
-
-    #ifdef DEVICE_ROLE_MASTER
-        // Démarrer Master et enregistrer ses callbacks
-        if (g_master_app_id != 0) {
-            SysError_t start_result = app_start(g_master_app_id);
-            if (start_result == SYS_OK) {
-                SERIAL_PRINTLN_MINIMAL("✓ Master app started");
-                kernel_log(LOG_LEVEL_INFO, "Master app started automatically");
-            } else {
-                SERIAL_PRINTLN_MINIMAL("✗ Master app start failed");
-                kernel_log(LOG_LEVEL_ERROR, "Failed to start Master app");
-            }
-        }
-        // Callbacks pour recevoir données des slaves
-        irrig_comm_set_sensor_callback(on_sensor_data_received);
-        irrig_comm_set_status_callback(on_irrigation_status_received);
-        kernel_log(LOG_LEVEL_INFO, "Master callbacks registered");
-
-    #elif defined(DEVICE_ROLE_SLAVE1)
-        // Démarrer Slave1 et enregistrer son callback
-        if (g_slave1_app_id != 0) {
-            SysError_t start_result = app_start(g_slave1_app_id);
-            if (start_result == SYS_OK) {
-                SERIAL_PRINTLN_MINIMAL("✓ Slave1 app started");
-                kernel_log(LOG_LEVEL_INFO, "Slave1 app started automatically");
-            } else {
-                SERIAL_PRINTLN_MINIMAL("✗ Slave1 app start failed");
-                kernel_log(LOG_LEVEL_ERROR, "Failed to start Slave1 app");
-            }
-        }
-        // Callback pour recevoir commandes du Master
-        irrig_comm_set_command_callback(on_command_received_slave);
-        kernel_log(LOG_LEVEL_INFO, "Slave1 command callback registered");
-
-    #elif defined(DEVICE_ROLE_SLAVE2)
-        // Démarrer Slave2 et enregistrer son callback
-        if (g_slave2_app_id != 0) {
-            SysError_t start_result = app_start(g_slave2_app_id);
-            if (start_result == SYS_OK) {
-                SERIAL_PRINTLN_MINIMAL("✓ Slave2 app started");
-                kernel_log(LOG_LEVEL_INFO, "Slave2 app started automatically");
-            } else {
-                SERIAL_PRINTLN_MINIMAL("✗ Slave2 app start failed");
-                kernel_log(LOG_LEVEL_ERROR, "Failed to start Slave2 app");
-            }
-        }
-        // Callback pour recevoir commandes du Master
-        irrig_comm_set_command_callback(on_command_received_slave);
-        kernel_log(LOG_LEVEL_INFO, "Slave2 command callback registered");
-
-    #else
-        SERIAL_PRINTLN_MINIMAL("⚠️  No role defined - apps not started automatically");
-        SERIAL_PRINTLN_MINIMAL("   Use CLI commands to configure and start apps manually");
-    #endif
-
-    // Note: Le serveur HTTP du Master n'est plus nécessaire avec ESP-NOW
-    // mais on peut le garder pour compatibilité si besoin
-    // master_http_init(8080);
-
-    // Enregistrer les IDs dans le système CLI
-    irrig_cli_set_app_ids(g_master_app_id, g_slave1_app_id, g_slave2_app_id);
-    SERIAL_PRINTLN_MINIMAL("Apps registered");
-
-    // Synchronisation initiale du temps (gère automatiquement NTP → RTC → System)
+    // Synchronisation initiale du temps
     SERIAL_PRINTLN_MINIMAL("Initial time sync...");
     kernel_log(LOG_LEVEL_INFO, "Performing initial time synchronization");
     SysError_t initial_sync_result = time_sync_automatic();
@@ -942,7 +641,6 @@ void setup() {
         kernel_log(LOG_LEVEL_INFO, "Initial time synchronization successful - Source: %s", source_name);
 
         // Afficher l'heure actuelle
-        time_t current_time = time_sync_get_current_time();
         kernel_log(LOG_LEVEL_INFO, "Current time: %s", time_sync_format_current_time().c_str());
 
         // Vérifier les conditions temporelles (si NTP disponible)
@@ -962,7 +660,7 @@ void setup() {
     system_initialized = true;
     system_running = true;
 
-    // Créer les tâches essentielles seulement
+    // Créer les tâches essentielles
     uint8_t task_id;
 
     // Tâche principale
@@ -1011,33 +709,16 @@ void setup() {
     // Afficher les apps enregistrées
     Serial.println();
     Serial.println("📋 Registered Apps:");
-    Serial.println("  ID 1: IrrigAppMaster");
-    Serial.println("  ID 2: IrrigAppSlaveSensors");
-    Serial.println("  ID 3: IrrigAppSlaveRelays");
+    Serial.println("  ID 10: espnow_master");
+    Serial.println("  ID 11: espnow_slave");
     Serial.println();
-    Serial.println("🎯 Configure device role:");
-    Serial.println("  irrig_set_role <master|slave1|slave2>");
-    Serial.println("  irrig_activate_role");
-    Serial.println("  irrig_config_save");
+    Serial.println("🎯 Available Commands:");
+    Serial.println("  help                - Show all commands");
+    Serial.println("  app_list            - List registered apps");
+    Serial.println("  wifi_save <ssid> <pwd> - Save WiFi credentials");
     Serial.println();
 
-    // Note: Rôles maintenant codés en dur plus haut dans le code
-    // Plus besoin d'activation automatique via CLI
-    #ifdef DEVICE_ROLE_MASTER
-        heartbeat_set_state(HEARTBEAT_RUNNING);  // Master actif
-        Serial.println("🚀 Master role active (hardcoded)");
-    #elif defined(DEVICE_ROLE_SLAVE1)
-        heartbeat_set_state(HEARTBEAT_RUNNING);  // Slave1 actif
-        Serial.println("🚀 Slave1 role active (hardcoded)");
-    #elif defined(DEVICE_ROLE_SLAVE2)
-        heartbeat_set_state(HEARTBEAT_RUNNING);  // Slave2 actif
-        Serial.println("🚀 Slave2 role active (hardcoded)");
-    #else
-        Serial.println("⚠️  No hardcoded role - use CLI commands manually");
-        Serial.println("   irrig_set_role <master|slave1|slave2>");
-        Serial.println("   irrig_activate_role");
-    #endif
-    Serial.println();
+    heartbeat_set_state(HEARTBEAT_READY);
 
     // Démarrer le shell
     interface_start();
@@ -1045,11 +726,6 @@ void setup() {
 
 void loop() {
     // Boucle principale du système
-
-    // Note: ESP-NOW gère les messages automatiquement via callbacks
-    // Plus besoin de gérer HTTP manuellement
-
-    // Boucle Application Manager
     app_manager_loop();
 
     // Délai pour éviter de surcharger le CPU

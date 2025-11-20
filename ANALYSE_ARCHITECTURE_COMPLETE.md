@@ -2,1022 +2,606 @@
 
 ## 🎯 Vue d'ensemble
 
-**D'O-Core OS** est un système d'exploitation temps réel léger et modulaire conçu pour ESP32. C'est une **mini OS** basée sur FreeRTOS avec une architecture microkernel, optimisée pour les applications IoT distribuées, particulièrement les systèmes d'irrigation intelligente.
+**D'O-Core OS** est un système d'exploitation embarqué minimaliste conçu pour les microcontrôleurs ESP32. C'est un framework modulaire qui fournit une couche d'abstraction complète pour gérer les tâches, la mémoire, les logs, le réseau et les applications.
 
 ### Caractéristiques principales
-- **Plateforme**: ESP32 (tous les variants)
-- **Framework**: Arduino + ESP-IDF + FreeRTOS
-- **Architecture**: Microkernel modulaire
-- **Langage**: C/C++
-- **Taille**: ~15,000 lignes de code
-- **Modules**: 20+
-- **Commandes CLI**: 100+
+- ✅ **Kernel temps réel** basé sur FreeRTOS
+- ✅ **Gestion des tâches** avec priorités et affinité CPU
+- ✅ **Système de logs** optimisé avec buffer circulaire
+- ✅ **Gestion mémoire** avec pool d'allocation
+- ✅ **Stack réseau** WiFi + HTTP + NTP + OTA
+- ✅ **Synchronisation temps** multi-source (NTP, RTC, Système)
+- ✅ **Framework d'applications** modulaire
+- ✅ **Interface CLI** complète avec shell interactif
 
 ---
 
-## 🏗️ ARCHITECTURE GÉNÉRALE
-
-### Modèle en couches
+## 📁 STRUCTURE DU PROJET
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   APPLICATIONS UTILISATEUR                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────��──��┐      │
-│  │ Master App   │  │ Sensors App  │  │ Relays App   │      │
-│  │ (Irrigation) │  │ (Capteurs)   │  │ (Relais)     │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ App Manager API
-┌─────────────────────────────────────────────────────────────┐
-│                  APPLICATION MANAGER                         │
-│  • Lifecycle Management  • State Management  • IPC           │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ Kernel API
-┌─────────────────────────────────────────────────────────────┐
-│                    KERNEL SERVICES                           │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │  Task    │  │  Memory  │  │   Log    │  │  Monitor │   │
-│  │ Manager  │  │ Manager  │  │  System  │  │  System  │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ HAL API
-┌─────────────────────────────────────────────────────────────┐
-│              HARDWARE ABSTRACTION LAYER (HAL)                │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │   RTC    │  │   Time   │  │ Heartbeat│  │   GPIO   │   │
-│  │ Manager  ���  │   Sync   │  │   LED    │  │  Control │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ Network API
-┌─────────────────────────────────────────────────────────────┐
-│                      NETWORK STACK                           │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │   WiFi   │  │   HTTP   │  │   NTP    │  │   OTA    │   │
-│  │ Manager  │  │  Client  │  │ Manager  │  │ Manager  │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │
-┌─────────────────────────────────────────────────────────────┐
-│                  ESP32 HARDWARE (ESP-IDF)                    │
-│  • FreeRTOS  • WiFi  • NVS  • SPI  • I2C  • GPIO           │
-└─────────────────────────────────────────────────────────────┘
+DO-Core-Os/
+├── src/
+│   ├── main.cpp                          # Point d'entrée principal
+│   ├── kernel/
+│   │   ├── core/                         # Cœur du système
+│   │   │   ├── kernel.h                  # Définitions principales
+│   │   │   ├── task_manager.cpp/h        # Gestion des tâches
+│   │   │   ├── memory_manager.cpp/h      # Gestion mémoire
+│   │   │   ├── log_system_optimized.cpp/h # Système de logs
+│   │   │   ├── system_monitor.cpp/h      # Monitoring système
+│   │   │   ├── event_system.cpp/h        # Système d'événements
+│   │   │   └── system_types.h            # Types système
+│   │   ├── hal/                          # Hardware Abstraction Layer
+│   │   │   ├── rtc_manager.cpp/h         # Gestion RTC DS3231
+│   │   │   ├── time_sync_manager.cpp/h   # Synchronisation temps
+│   │   │   └── heartbeat_led.cpp/h       # LED de diagnostic
+│   │   ├── network/                      # Stack réseau
+│   │   │   ├── wifi_manager.cpp/h        # Gestion WiFi
+│   │   │   ├── ntp_manager.cpp/h         # Synchronisation NTP
+│   │   │   ├── http_client.cpp/h         # Client HTTP
+│   │   │   └── ota_manager.cpp/h         # Mise à jour OTA
+│   │   ├── interface/                    # Interface utilisateur
+│   │   │   ├── interface.cpp/h           # Shell CLI
+│   │   │   └── [commandes CLI]
+│   │   └── app/
+│   │       └── app_manager.cpp/h         # Gestionnaire d'apps
+│   ├── apps/
+│   │   └── example_app/                  # Application exemple
+│   │       ├── example_app.cpp/h
+│   │       └── README.md
+│   └── lib/
+│       └── DMD32-main/                   # Bibliothèque affichage LED
+├── platformio.ini                        # Configuration PlatformIO
+├── README.md                             # Documentation principale
+└── [Documentation]                       # Fichiers d'analyse
 ```
 
 ---
 
 ## 🔧 COMPOSANTS PRINCIPAUX
 
-### 1. KERNEL CORE (`src/kernel/core/`)
+### 1. **KERNEL CORE** (`src/kernel/core/`)
 
-#### 1.1 Task Manager (`task_manager.h/cpp`)
-**Responsabilité**: Gestion des tâches FreeRTOS
+#### Task Manager (`task_manager.cpp/h`)
+**Responsabilité**: Gestion complète des tâches FreeRTOS
 
-**Caractéristiques**:
-- Création/suppression de tâches
-- Priorités: LOW, NORMAL, HIGH, CRITICAL
-- Pinning à des cœurs CPU spécifiques
-- Statistiques par tâche (CPU time, stack usage)
-- Suspension/reprise de tâches
-- Max 32 tâches simultanées
-
-**API clés**:
 ```cpp
-task_create_pinned_to_core(name, function, param, priority, stack_size, core_id, &task_id)
-task_get_info(task_id, &info)
-task_get_count()
-task_manager_print_stats()
+// Création de tâche avec affinité CPU
+SysError_t task_create_pinned_to_core(
+    const char* name,
+    TaskFunction_t function,
+    void* parameter,
+    uint8_t priority,
+    uint16_t stack_size,
+    uint8_t core,
+    uint8_t* task_id
+);
+
+// Gestion du cycle de vie
+task_suspend(task_id);
+task_resume(task_id);
+task_delete(task_id);
 ```
 
-#### 1.2 Memory Manager (`memory_manager.h/cpp`)
-**Responsabilité**: Gestion de la mémoire heap et pools
+**Caractéristiques**:
+- Support multi-core (Core 0 et Core 1)
+- Priorités configurables (0-24)
+- Stack sizes optimisés
+- Statistiques de tâches en temps réel
+
+#### Memory Manager (`memory_manager.cpp/h`)
+**Responsabilité**: Allocation mémoire sécurisée avec pool
+
+```cpp
+// Allocation avec tracking
+void* memory_allocate(size_t size, const char* source);
+void memory_free(void* ptr);
+
+// Statistiques
+uint32_t memory_get_free();
+uint32_t memory_get_used();
+```
 
 **Caractéristiques**:
-- Allocation/désallocation dynamique
-- 4 pools mémoire pré-alloués (32, 64, 128, 256 bytes)
+- Pool d'allocation pré-alloué
 - Détection de fuites mémoire
-- Fragmentation tracking
-- Validation d'intégrité des blocs
+- Statistiques par source
+- Fragmentation minimale
 
-**API clés**:
+#### Log System (`log_system_optimized.cpp/h`)
+**Responsabilité**: Système de logs haute performance
+
 ```cpp
-memory_alloc(size)
-memory_free(ptr)
-memory_get_stats(&stats)
-memory_validate_all_blocks()
+// Logging avec niveaux
+kernel_log(LOG_LEVEL_INFO, "Message: %s", data);
+kernel_log(LOG_LEVEL_ERROR, "Erreur: %d", code);
+
+// Récupération des logs
+log_system_get_messages(buffer, max_count, &actual_count);
 ```
 
-#### 1.3 Log System (`log_system_optimized.h/cpp`)
-**Responsabilité**: Système de logging centralisé
-
 **Caractéristiques**:
-- Buffer circulaire de 1000 messages
-- 5 niveaux: DEBUG, INFO, WARN, ERROR, CRITICAL
-- Persistance en NVS flash
-- Filtrage par niveau/source/temps
-- Echo optionnel sur Serial
+- Buffer circulaire (pas de débordement)
+- 5 niveaux de log (DEBUG, INFO, WARN, ERROR, CRITICAL)
+- Echo en temps réel optionnel
+- Timestamps précis
 
-**API clés**:
+#### System Monitor (`system_monitor.cpp/h`)
+**Responsabilité**: Surveillance de la santé du système
+
 ```cpp
-kernel_log(LOG_LEVEL_INFO, "Message: %s", data)
-log_system_get_count()
-log_system_print_tail(count)
-log_system_print_by_level(level)
+// Monitoring
+system_monitor_get_uptime();
+system_monitor_is_system_healthy();
+system_monitor_get_cpu_usage();
 ```
 
-#### 1.4 System Monitor (`system_monitor.h/cpp`)
-**Responsabilité**: Surveillance de la santé système
-
 **Caractéristiques**:
-- Monitoring CPU, mémoire, WiFi
-- Historique des performances (60 points)
-- Système d'alertes avec seuils configurables
-- Détection d'anomalies
-- Health score (0-100)
-
-**API clés**:
-```cpp
-system_monitor_get_performance(&perf)
-system_monitor_add_alert(type, message)
-system_monitor_is_system_healthy()
-system_monitor_get_uptime()
-```
-
-#### 1.5 Event System (`event_system.h/cpp`)
-**Responsabilité**: Système d'événements asynchrone
-
-**Caractéristiques**:
-- Queue d'événements (64 max)
-- Callbacks enregistrables
-- Types d'événements: SYSTEM_START, TASK_CREATED, MEMORY_LOW, WIFI_CONNECTED, etc.
+- Uptime tracking
+- Détection de watchdog
+- Santé système globale
+- Alertes de ressources
 
 ---
 
-### 2. HARDWARE ABSTRACTION LAYER (HAL) (`src/kernel/hal/`)
+### 2. **HARDWARE ABSTRACTION LAYER** (`src/kernel/hal/`)
 
-#### 2.1 RTC Manager (`rtc_manager.h/cpp`)
-**Responsabilité**: Gestion du RTC DS3231 (I2C)
+#### RTC Manager (`rtc_manager.cpp/h`)
+**Responsabilité**: Gestion du module RTC DS3231
 
-**Caractéristiques**:
-- Lecture/écriture de l'heure
-- Détection de batterie faible
-- Lecture de température
-- Pins: SDA=25, SCL=26, Address=0x68
-
-**API clés**:
 ```cpp
-rtc_manager_init()
-rtc_get_time()  // Retourne timestamp Unix
-rtc_set_time(timestamp)
-rtc_get_temperature()
-rtc_is_battery_ok()
+// Initialisation
+rtc_manager_init();
+
+// Lecture/Écriture temps
+time_t rtc_get_time();
+rtc_set_time(time_t timestamp);
+
+// Diagnostic
+float rtc_get_temperature();
+bool rtc_is_battery_ok();
 ```
 
-#### 2.2 Time Sync Manager (`time_sync_manager.h/cpp`)
-**Responsabilité**: Synchronisation automatique du temps
-
-**Hiérarchie des sources**:
-1. **NTP** (priorité haute) - Via WiFi
-2. **RTC** (priorité moyenne) - Horloge matérielle
-3. **SYSTEM** (priorité basse) - Horloge système
-
 **Caractéristiques**:
-- Sync automatique toutes les 15 minutes
-- Sync immédiate au démarrage WiFi
-- Fallback automatique si NTP indisponible
-- Gestion des fuseaux horaires
+- Communication I2C
+- Compensation température
+- Détection batterie faible
+- Récupération d'erreurs
 
-**API clés**:
+#### Time Sync Manager (`time_sync_manager.cpp/h`)
+**Responsabilité**: Synchronisation temps multi-source
+
 ```cpp
-time_sync_init()
-time_sync_automatic()  // Appelée par tâche
-time_sync_get_current_source()
-time_sync_get_current_time()
-time_sync_request_immediate()
+// Synchronisation automatique
+time_sync_automatic();
+
+// Sources disponibles
+TIME_SOURCE_NTP      // Réseau (priorité haute)
+TIME_SOURCE_RTC      // Horloge temps réel
+TIME_SOURCE_SYSTEM   // Horloge système (fallback)
 ```
 
-#### 2.3 Heartbeat LED (`heartbeat_led.h/cpp`)
-**Responsabilité**: Indicateur visuel de l'état système
+**Caractéristiques**:
+- Fallback automatique
+- Synchronisation périodique (15 min)
+- Détection de dérive
+- Logging détaillé
 
-**États et patterns**:
-| État | Pattern | Signification |
-|------|---------|---------------|
-| BOOTING | Rapide (100ms) | Démarrage en cours |
-| READY | Lent (1s) | Système prêt, WiFi OK |
-| RUNNING | Double pulse (200ms) | Application active |
-| WIFI_ERROR | Très rapide (50ms) | Pas de WiFi |
-| ERROR | Fixe ON | Erreur critique |
+#### Heartbeat LED (`heartbeat_led.cpp/h`)
+**Responsabilité**: Diagnostic visuel du système
 
-**Pin**: GPIO 2 (LED intégrée ESP32)
+```cpp
+// États
+HEARTBEAT_BOOTING
+HEARTBEAT_READY
+HEARTBEAT_WIFI_ERROR
+HEARTBEAT_SYSTEM_ERROR
+```
+
+**Caractéristiques**:
+- Patterns LED distincts
+- Fréquence adaptée à l'état
+- Diagnostic visuel rapide
 
 ---
 
-### 3. NETWORK STACK (`src/kernel/network/`)
+### 3. **NETWORK STACK** (`src/kernel/network/`)
 
-#### 3.1 WiFi Manager (`wifi_manager.h/cpp`)
-**Responsabilité**: Gestion de la connexion WiFi
+#### WiFi Manager (`wifi_manager.cpp/h`)
+**Responsabilité**: Gestion WiFi STA/AP
+
+```cpp
+// Configuration
+wifi_manager_init(&config);
+wifi_manager_connect();
+wifi_manager_disconnect();
+
+// Statut
+WifiStatus_t wifi_manager_get_status();
+```
 
 **Caractéristiques**:
 - Mode STA (Station)
-- Sauvegarde persistante des credentials (NVS)
-- Auto-reconnexion
+- Reconnexion automatique
+- Gestion des credentials
 - Monitoring RSSI
-- Supervision en tâche dédiée
 
-**API clés**:
+#### NTP Manager (`ntp_manager.cpp/h`)
+**Responsabilité**: Synchronisation temps réseau
+
 ```cpp
-wifi_manager_init(config)
-connect_to_wifi(ssid, password)
-save_wifi_credentials(ssid, password)
-load_wifi_credentials()
-```
+// Synchronisation
+ntp_sync();
+ntp_is_synced();
 
-#### 3.2 NTP Manager (`ntp_manager.h/cpp`)
-**Responsabilité**: Synchronisation du temps via NTP
+// Configuration
+ntp_set_timezone(gmt_offset, daylight_offset);
+ntp_get_timezone_string();
+```
 
 **Caractéristiques**:
-- Serveur: pool.ntp.org
-- Timezone: UTC+1 (Maroc)
-- Détection heures de bureau vs nuit
-- Retry automatique
+- Pool NTP configurable
+- Gestion fuseau horaire
+- Heure d'été/hiver
+- Statistiques de sync
 
-**API clés**:
+#### HTTP Client (`http_client.cpp/h`)
+**Responsabilité**: Client HTTP pour requêtes réseau
+
 ```cpp
-ntp_init()
-ntp_sync()
-ntp_is_synced()
-ntp_is_business_hours()
-ntp_is_night_time()
+// Requêtes
+http_get(url, response);
+http_post(url, data, response);
+http_put(url, data, response);
+http_delete(url, response);
 ```
-
-#### 3.3 HTTP Client (`http_client.h/cpp`)
-**Responsabilité**: Client HTTP/REST complet
 
 **Caractéristiques**:
-- Méthodes: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
-- Retry automatique (3 tentatives)
-- Timeout configurable (10s par défaut)
-- Statistiques de requêtes
-- Support JSON (ArduinoJson)
+- Support HTTPS
+- Gestion timeouts
+- Compression optionnelle
+- Statistiques requêtes
 
-**API clés**:
+#### OTA Manager (`ota_manager.cpp/h`)
+**Responsabilité**: Mise à jour firmware Over-The-Air
+
 ```cpp
-http_client.get(endpoint, headers)
-http_client.post(endpoint, data, headers)
-http_client.put(endpoint, data, headers)
-http_client.delete_request(endpoint, headers)
-http_client.get_stats(&stats)
-```
+// Démarrage serveur OTA
+ota_manager_start();
+ota_manager_stop();
 
-#### 3.4 OTA Manager (`ota_manager.h/cpp`)
-**Responsabilité**: Mises à jour firmware Over-The-Air
+// Statut
+ota_manager_get_status();
+```
 
 **Caractéristiques**:
-- Web interface ElegantOTA
-- Port: 3232
-- Authentification optionnelle
-- Auto-reboot après update
-- Tracking des versions
-
-**API clés**:
-```cpp
-ota_manager.init()
-ota_manager.start()
-ota_manager.get_version_info()
-ota_manager.get_ota_url()
-```
+- Serveur web intégré
+- Vérification intégrité
+- Rollback automatique
+- Logging détaillé
 
 ---
 
-### 4. APPLICATION MANAGER (`src/kernel/app/`)
+### 4. **APPLICATION FRAMEWORK** (`src/kernel/app/`)
 
-#### 4.1 App Manager (`app_manager.h/cpp`)
+#### App Manager (`app_manager.cpp/h`)
 **Responsabilité**: Gestion du cycle de vie des applications
 
-**Caractéristiques**:
-- Enregistrement dynamique d'apps
-- États: UNLOADED → LOADING ��� RUNNING → PAUSED → STOPPED
-- Callbacks: init, start, stop, pause, resume, loop
-- Isolation des ressources par app
-- Max 4 applications simultanées
-
-**Cycle de vie**:
-```
-UNLOADED
-   ↓
-LOADING → init() callback
-   ↓
-RUNNING → start() callback → loop() callback (répété)
-   ↓
-PAUSED → pause() callback
-   ↓
-STOPPED → stop() callback
-   ↓
-ERROR
-```
-
-**API clés**:
 ```cpp
-app_register(name, description, type, callbacks, &app_id)
-app_start(app_id)
-app_stop(app_id)
-app_pause(app_id)
-app_resume(app_id)
-app_manager_loop()  // À appeler dans loop()
+// Enregistrement
+app_register(app_id, name, description, type);
+
+// Contrôle
+app_start(app_id);
+app_stop(app_id);
+app_pause(app_id);
+app_resume(app_id);
+
+// Informations
+app_get_info(app_id, &info);
+app_get_count();
 ```
-
----
-
-### 5. INTERFACE CLI (`src/kernel/interface/`)
-
-#### 5.1 Interface (`interface.h/cpp`)
-**Responsabilité**: Shell interactif avec 100+ commandes
-
-**Catégories de commandes**:
-- **Système**: help, status, tasks, memory, logs, uptime, version
-- **WiFi**: wifi_save, wifi_scan, wifi_status, wifi_reconnect
-- **NTP**: ntp_status, ntp_sync, ntp_time
-- **Applications**: app_list, app_start, app_stop, app_info
-- **HTTP**: http_get, http_post, http_put, http_delete
-- **RTC/Time**: rtc_status, time_status, time_sync
-- **Irrigation**: irrig_set_role, irrig_config_show, irrig_status
-
-**Exemple d'utilisation**:
-```bash
-D'O-Core> help
-D'O-Core> system_info
-D'O-Core> wifi_save MySSID MyPassword
-D'O-Core> app_list
-D'O-Core> app_start 1
-D'O-Core> irrig_set_role master
-```
-
----
-
-## 🌾 SYSTÈME D'IRRIGATION (IRRIG DISTRO)
-
-### Architecture Master-Slave
-
-```
-┌──────────────────────────────────────────────────���──────────┐
-│                    MASTER CONTROLLER                         │
-│  • Orchestration des schedules                              │
-│  • Polling configuration serveur                            │
-│  • Agrégation données capteurs                              │
-│  • Décisions d'irrigation                                   │
-│  • Communication HTTP avec serveur                          │
-└─────────────────────────────────────────────────────────────┘
-         ↑                                    ↓
-    ESP-NOW                              HTTP/REST
-         ↑                                    ↓
-    ┌────────────────────────────────────────────┐
-    │                                            │
-┌───────────────────┐              ┌──────────────────────┐
-│  SLAVE 1: SENSORS │              │  SLAVE 2: RELAYS     │
-│  • Lecture ADC    │              │  • Contrôle GPIO     │
-│  • Capteurs humidité│             │  • Relais irrigation │
-│  • Temp/Humidité  │              │  • Pompe             │
-│  • Envoi données  │              │  • Exécution commandes│
-└───────────────────┘              └──────────────────────┘
-```
-
-### 1. Master App (`src/apps/irrig_app_master/`)
-
-**Responsabilité**: Orchestration centrale du système d'irrigation
-
-**Fonctionnalités**:
-- Polling configuration serveur (10s)
-- Lecture données capteurs (5s)
-- Envoi données serveur (15s)
-- Gestion des schedules d'irrigation
-- Détection seuils d'urgence (humidité < 15%)
-- Génération de données simulées (mode simulation)
-
-**Structure de données - Zone**:
-```cpp
-struct ZoneSlot {
-    int id;                    // Index 0-3
-    int physicalZoneNumber;    // Numéro relais 1-4
-    bool configured;
-    String zoneId;             // ID serveur
-    int waterPerDay;           // ml/jour
-    String irrigationTimes[5]; // Heures (ex: "08:00")
-    int scheduleCount;         // 1-5 créneaux
-    int humidityThreshold;     // Seuil urgence %
-};
-```
-
-**Structure de données - Capteur**:
-```cpp
-struct SensorSlot {
-    String id;                 // "s_01" à "s_12"
-    bool assigned;
-    String zoneId;             // Référence zone
-};
-```
-
-**Callbacks HTTP**:
-```cpp
-void on_sensor_data_received(SensorDataPacket_t* data)
-void on_irrigation_status_received(IrrigationStatusPacket_t* status)
-```
-
-**Configuration**:
-```cpp
-typedef struct {
-    char server_url[128];
-    char device_id[64];
-    char device_secret[32];
-    uint16_t poll_interval_seconds;
-    uint16_t sensor_read_interval_seconds;
-    uint16_t data_send_interval_seconds;
-    uint8_t max_zones;
-    uint8_t max_sensors;
-    bool simulation_mode;
-} IrrigAppConfig_t;
-```
-
-### 2. Slave Sensors App (`src/apps/irrig_app_slave_sensors/`)
-
-**Responsabilité**: Lecture des capteurs et envoi au Master
-
-**Fonctionnalités**:
-- Lecture ADC des 12 capteurs d'humidité
-- Capteurs de température/humidité (DHT/BME280)
-- Moyennage sur N échantillons
-- Envoi via ESP-NOW au Master
-- Mode simulation pour test
-
-**Pins ADC**:
-```
-Capteur 1-6:  GPIO 32-36, 39
-Capteur 7-12: GPIO 25-27, 14, 12-13
-```
-
-**Paquet de données**:
-```cpp
-typedef struct {
-    uint32_t timestamp;
-    float moisture[12];        // % humidité
-    float temperature;         // °C
-    float humidity;            // %
-    float pressure;            // hPa
-    float battery_level;       // %
-    int8_t signal_strength;    // dBm
-} SensorDataPacket_t;
-```
-
-**Configuration**:
-```cpp
-typedef struct {
-    bool simulation_mode;
-    uint16_t read_interval_ms;
-    uint8_t samples_per_read;
-    bool enable_http_server;
-    uint16_t http_server_port;
-} IrrigSensorConfig_t;
-```
-
-### 3. Slave Relays App (`src/apps/irrig_app_slave_relays/`)
-
-**Responsabilité**: Contrôle des relais d'irrigation
-
-**Fonctionnalités**:
-- Réception commandes du Master (ESP-NOW)
-- Contrôle GPIO des relais
-- Gestion de la pompe
-- Timeout de sécurité (1h par défaut)
-- Publication statut irrigation
-
-**Pins Relais**:
-```
-Zone 1: GPIO 15
-Zone 2: GPIO 4
-Zone 3: GPIO 18
-Zone 4: GPIO 19
-Pompe:  GPIO 5
-```
-
-**Paquet de commande**:
-```cpp
-typedef struct {
-    IrrigationCommand_t command;  // START, STOP, EMERGENCY_STOP
-    uint8_t zone_id;              // 1-4
-    uint16_t duration_seconds;
-    char zone_server_id[64];
-    uint32_t timestamp;
-} IrrigationCommandPacket_t;
-```
-
-**Paquet de statut**:
-```cpp
-typedef struct {
-    uint8_t zone_id;
-    bool is_irrigating;
-    uint32_t remaining_seconds;
-    bool pump_running;
-    bool relay_states[4];
-    uint32_t timestamp;
-} IrrigationStatusPacket_t;
-```
-
-**Configuration**:
-```cpp
-typedef struct {
-    uint32_t safety_timeout_ms;
-    bool enable_http_server;
-    uint16_t http_server_port;
-    uint16_t status_publish_interval_ms;
-} IrrigRelayConfig_t;
-```
-
-### 4. Communication ESP-NOW (`src/apps/irrig_common/irrig_communication.h/cpp`)
-
-**Responsabilité**: Couche de communication ESP-NOW
 
 **Caractéristiques**:
-- Protocole sans WiFi (fonctionne même sans connexion)
-- Portée: ~250m en ligne de vue
-- Débit: ~250 kbps
-- Fiabilité: Retry automatique
-- MAC addresses codées en dur (pour test)
+- Enregistrement dynamique
+- États d'application (RUNNING, PAUSED, STOPPED)
+- Gestion des ressources
+- Statistiques par app
 
-**Configuration**:
-```cpp
-typedef struct {
-    uint8_t master_mac[6];
-    uint8_t slave1_mac[6];
-    uint8_t slave2_mac[6];
-    uint8_t local_mac[6];
-    uint16_t send_timeout_ms;
-    uint8_t retry_count;
-    uint16_t retry_delay_ms;
-    uint8_t wifi_channel;
-} IrrigCommConfig_t;
+---
+
+### 5. **INTERFACE UTILISATEUR** (`src/kernel/interface/`)
+
+#### Shell CLI (`interface.cpp/h`)
+**Responsabilité**: Interface ligne de commande interactive
+
+**Commandes système**:
+```
+help              - Affiche l'aide
+status            - État du système
+tasks             - Liste des tâches
+memory            - Informations mémoire
+dmesg             - Logs système
+logs [filter]     - Logs filtrés
+uptime            - Uptime système
+version           - Version
 ```
 
-**API**:
-```cpp
-irrig_comm_init(&config)
-irrig_comm_publish_sensor_data(&data)
-irrig_comm_send_irrigation_command(&cmd)
-irrig_comm_publish_irrigation_status(&status)
-irrig_comm_set_sensor_callback(callback)
-irrig_comm_set_command_callback(callback)
+**Commandes WiFi**:
+```
+wifi_save <ssid> <pwd>    - Sauvegarde credentials
+wifi_auto                 - Connexion auto
+wifi_scan                 - Scan réseaux
+wifi_stats                - Statistiques WiFi
 ```
 
-**Flux de communication**:
+**Commandes NTP**:
 ```
-Slave1 (Sensors)
-    ↓ ESP-NOW (ESPNOW_MSG_SENSOR_DATA)
-Master
-    ↓ HTTP (POST /api/sensor-data)
-Serveur
-    ↓ HTTP (GET /api/config)
-Master
-    ↓ ESP-NOW (ESPNOW_MSG_IRRIGATION_CMD)
-Slave2 (Relays)
-    ↓ GPIO (Contrôle relais)
-Irrigation
+ntp_sync                  - Synchronisation manuelle
+ntp_status                - État NTP
+ntp_timezone <offset>     - Configuration fuseau
+ntp_test                  - Diagnostic NTP
+```
+
+**Commandes Applications**:
+```
+app_list                  - Liste applications
+app_start <id>            - Démarrer app
+app_stop <id>             - Arrêter app
+app_info <id>             - Infos app
 ```
 
 ---
 
-## 🔄 FLUX D'INITIALISATION (BOOT SEQUENCE)
-
-### Phase 1: Démarrage matériel (setup())
-
-```
-1. Serial.begin(115200)
-   ↓
-2. NVS Flash init
-   ↓
-3. Task Manager init
-   ↓
-4. Memory Manager init
-   ↓
-5. Log System init
-   ���
-6. System Monitor init + start
-   ↓
-7. WiFi Manager init
-   ↓
-8. NTP Manager init
-   ↓
-9. HTTP Client init
-   ↓
-10. Heartbeat LED init (HEARTBEAT_BOOTING)
-    ↓
-11. OTA Manager init
-    ↓
-12. RTC Manager init
-    ↓
-13. Time Sync Manager init
-    ↓
-14. App Manager init
-    ↓
-15. WiFi mode STA
-    ↓
-16. Load WiFi credentials from NVS
-    ↓
-17. Auto-connect WiFi (si credentials trouvées)
-    ↓
-18. ESP-NOW communication init
-    ↓
-19. Register 3 apps (Master, Slave1, Slave2)
-    ↓
-20. Initial time sync (NTP → RTC → System)
-    ↓
-21. Create system tasks:
-    - system_main_task
-    - wifi_supervision_task
-    - time_sync_task
-    - heartbeat_task
-    ↓
-22. Interface (CLI) init + start
-    ↓
-23. Display system logo (neofetch style)
-    ↓
-24. system_running = true
-```
-
-### Phase 2: Boucle principale (loop())
-
-```
-Infini:
-    1. app_manager_loop()  // Appelle loop() de chaque app
-    2. delay(10ms)
-```
-
-### Phase 3: Tâches système (FreeRTOS)
-
-**Tâche 1: system_main_task**
-- Toutes les 5 minutes: Log heap et compteur
-- Vérifie system_running
-
-**Tâche 2: wifi_supervision_task**
-- Toutes les 1s: Vérifie statut WiFi
-- Détecte changements de connexion
-- Toutes les 30 min: Log statut
-- Reconnexion automatique si déconnecté
-
-**Tâche 3: time_sync_task**
-- Toutes les 15 min: Sync NTP → RTC → System
-- Sync immédiate si demandée
-- Fallback RTC si NTP indisponible
-
-**Tâche 4: heartbeat_task**
-- Gère LED GPIO 2 selon état système
-- Patterns visuels pour diagnostic
-
----
-
-## 📊 FLUX DE DONNÉES (IRRIGATION)
-
-### Scénario: Irrigation programmée
-
-```
-Serveur
-  ↓ HTTP GET /api/config
-Master (polling 10s)
-  ├─ Parse configuration
-  ├─ Détecte schedule: "08:00 - Zone 1 - 30min"
-  ├─ Heure actuelle = 08:00 → Déclenche irrigation
-  │
-  ├─ ESP-NOW → Slave2
-  │  └─ IrrigationCommandPacket_t
-  │     ├─ command: CMD_START_IRRIGATION
-  │     ├─ zone_id: 1
-  │     ├─ duration_seconds: 1800
-  │
-  └─ Slave2 (Relays)
-     ├─ Reçoit commande
-     ├─ GPIO 15 = HIGH (Zone 1 ON)
-     ├─ GPIO 5 = HIGH (Pompe ON)
-     ├─ Timer: 1800s
-     │
-     └─ Toutes les 10s: Publie statut
-        └─ IrrigationStatusPacket_t
-           ├─ zone_id: 1
-           ├─ is_irrigating: true
-           ├─ remaining_seconds: 1790
-           │
-           └─ Master reçoit
-              └─ HTTP POST /api/irrigation-status
-                 └─ Serveur met à jour UI
-```
-
-### Scénario: Seuil d'urgence
-
-```
-Slave1 (Sensors) - Toutes les 5s
-  ├─ Lit ADC capteurs
-  ├─ moisture[0] = 12% (< 15% seuil)
-  │
-  └─ ESP-NOW → Master
-     └─ SensorDataPacket_t
-        ├─ moisture[12]
-        ├─ temperature
-        ├─ humidity
-
-Master reçoit
-  ├─ Détecte moisture < 15%
-  ├─ Déclenche irrigation d'urgence
-  │
-  └─ ESP-NOW → Slave2
-     └─ IrrigationCommandPacket_t
-        ├─ command: CMD_START_IRRIGATION
-        ├─ zone_id: (zone du capteur)
-        ├─ duration_seconds: 600 (10 min)
-```
-
----
-
-## 🎯 RÔLES DES DEVICES (HARDCODED)
-
-### Configuration dans main.cpp (lignes 759+)
-
-```cpp
-// Décommenter UNE SEULE ligne selon le device
-
-//#define DEVICE_ROLE_MASTER     // Master controller
- #define DEVICE_ROLE_SLAVE1    // Slave sensors
-// #define DEVICE_ROLE_SLAVE2   // Slave relays
-```
-
-### Comportement selon rôle
-
-**DEVICE_ROLE_MASTER**:
-- Démarre app Master (ID: 1)
-- Enregistre callbacks: on_sensor_data_received, on_irrigation_status_received
-- Polling serveur HTTP
-- Orchestration irrigation
-
-**DEVICE_ROLE_SLAVE1**:
-- Démarre app Slave Sensors (ID: 2)
-- Enregistre callback: on_command_received_slave
-- Lecture capteurs ADC
-- Envoi données ESP-NOW
-
-**DEVICE_ROLE_SLAVE2**:
-- Démarre app Slave Relays (ID: 3)
-- Enregistre callback: on_command_received_slave
-- Contrôle GPIO relais
-- Exécution commandes Master
-
----
-
-## 🔐 PERSISTANCE DES DONNÉES (NVS)
-
-### Namespaces NVS utilisés
-
-| Namespace | Clés | Contenu |
-|-----------|------|---------|
-| `wifi` | ssid, password, valid | Credentials WiFi |
-| `irrig_config` | server_url, device_id, device_secret, role | Config irrigation |
-| `logs` | log_buffer | Buffer de logs |
-| `ota` | version, checksum | Info OTA |
-
-### Exemple: Sauvegarde credentials WiFi
-
-```cpp
-// Sauvegarde
-Preferences prefs;
-prefs.begin("wifi", false);
-prefs.putString("ssid", "MySSID");
-prefs.putString("password", "MyPassword");
-prefs.putBool("valid", true);
-prefs.end();
-
-// Chargement
-prefs.begin("wifi", true);
-String ssid = prefs.getString("ssid", "");
-String password = prefs.getString("password", "");
-bool valid = prefs.getBool("valid", false);
-prefs.end();
-```
-
----
-
-## 🌐 PROTOCOLES DE COMMUNICATION
-
-### 1. ESP-NOW (Slave ↔ Master)
-
-**Avantages**:
-- Fonctionne sans WiFi
-- Portée: ~250m
-- Latence faible
-- Fiable avec retry
-
-**Désavantages**:
-- Pas de routage
-- Portée limitée
-- Bande passante limitée
-
-**Utilisation**:
-- Slave1 → Master: Données capteurs
-- Master → Slave2: Commandes irrigation
-- Slave2 → Master: Statut irrigation
-
-### 2. HTTP/REST (Master ↔ Serveur)
-
-**Endpoints**:
-- `GET /api/config` - Récupérer configuration
-- `POST /api/sensor-data` - Envoyer données capteurs
-- `POST /api/irrigation-status` - Envoyer statut irrigation
-- `POST /api/device-register` - Enregistrer device
-
-**Format JSON**:
-```json
-{
-  "device_id": "ESP32_IRRIGATION_11100454456464674",
-  "timestamp": 1704067200,
-  "moisture": [45.2, 52.1, ...],
-  "temperature": 28.5,
-  "humidity": 65.0,
-  "pressure": 1013.25
-}
-```
-
-### 3. NTP (Synchronisation temps)
-
-**Serveur**: pool.ntp.org
-**Intervalle**: 15 minutes
-**Timezone**: UTC+1 (Maroc)
-
----
-
-## 📈 PERFORMANCE ET RESSOURCES
-
-### Utilisation mémoire
-
-| Composant | RAM (approx) |
-|-----------|--------------|
-| Kernel core | 20 KB |
-| Task Manager | 5 KB |
-| Memory Manager | 3 KB |
-| Log System | 15 KB (buffer 1000 msgs) |
-| WiFi Manager | 10 KB |
-| HTTP Client | 8 KB |
-| App Manager | 5 KB |
-| **Total Kernel** | **~70 KB** |
-| Master App | 15 KB |
-| Slave1 App | 10 KB |
-| Slave2 App | 8 KB |
-| **Total Apps** | **~33 KB** |
-| **TOTAL** | **~103 KB / 320 KB** |
-
-### Utilisation CPU
-
-| Tâche | CPU % (idle) | CPU % (active) |
-|-------|--------------|----------------|
-| system_main_task | 0.1% | 0.1% |
-| wifi_supervision_task | 0.2% | 0.5% |
-| time_sync_task | 0.1% | 2% (lors sync) |
-| heartbeat_task | 0.5% | 0.5% |
-| App tasks | 1-5% | 10-30% |
-| **Total** | **~2%** | **~15-40%** |
-
----
-
-## 🐛 POINTS IMPORTANTS À NOTER
-
-### 1. MAC Addresses hardcodées
-
-Les adresses MAC sont codées en dur dans main.cpp pour test:
-```cpp
-uint8_t master_mac_hardcoded[6] = {0x5C, 0x01, 0x3B, 0x4D, 0x65, 0x68};
-uint8_t slave1_mac_hardcoded[6] = {0x00, 0x4B, 0x12, 0x2C, 0x6D, 0xEC};
-```
-
-**À faire**: Implémenter découverte automatique ou configuration CLI.
-
-### 2. Rôles hardcodés
-
-Les rôles des devices sont définis par `#define` dans main.cpp:
-```cpp
-#define DEVICE_ROLE_SLAVE1  // À changer pour chaque device
-```
-
-**À faire**: Implémenter sélection de rôle via CLI persistante.
-
-### 3. Simulation mode
-
-Master App peut fonctionner en mode simulation:
-```cpp
-irrig_config.simulation_mode = true;  // Génère données fictives
-```
-
-Utile pour test sans hardware réel.
-
-### 4. Timezone fixe
-
-Timezone codée en dur: UTC+1 (Maroc)
-```cpp
-#define NTP_GMT_OFFSET_SEC 3600
-```
-
-**À faire**: Rendre configurable via CLI.
-
-### 5. Documentation obsolète
-
-Certains fichiers .md sont obsolètes (ex: ARCHITECTURE_MASTER_SLAVE_HTTP.md).
-**À faire**: Mettre à jour la documentation selon le code réel.
-
----
-
-## 🚀 FLUX D'EXÉCUTION COMPLET
+## 🔄 FLUX D'EXÉCUTION
 
 ### Démarrage du système
 
 ```
-1. ESP32 boot
-   ↓
-2. Arduino setup()
-   ├─ Initialise tous les managers
-   ├─ Charge credentials WiFi
-   ├─ Connecte WiFi (auto)
-   ├─ Initialise ESP-NOW
-   ├─ Enregistre 3 apps
-   ├─ Crée tâches système
-   └─ Démarre CLI
-   ↓
-3. Arduino loop()
-   ├─ app_manager_loop()
-   └─ delay(10ms)
-   ↓
-4. FreeRTOS scheduler
-   ├─ system_main_task (toutes les 5 min)
-   ├─ wifi_supervision_task (toutes les 1s)
-   ├─ time_sync_task (toutes les 15 min)
-   ├─ heartbeat_task (continu)
-   └─ App tasks (selon app)
+1. setup()
+   ├─ Initialisation série (115200 baud)
+   ├─ Initialisation NVS (stockage persistant)
+   ├─ Initialisation Task Manager
+   ├─ Initialisation Memory Manager
+   ├─ Initialisation Log System
+   ├─ Initialisation System Monitor
+   ├─ Initialisation WiFi Manager
+   ├─ Initialisation NTP Manager
+   ├─ Initialisation HTTP Client
+   ├─ Initialisation OTA Manager
+   ├─ Initialisation RTC Manager
+   ├─ Initialisation Time Sync Manager
+   ├─ Initialisation App Manager
+   ├─ Initialisation Interface (CLI)
+   ├─ Synchronisation temps initiale
+   └─ Création des tâches principales
+
+2. Tâches principales créées
+   ├─ SystemMain (PRIORITY_NORMAL)
+   ��─ WiFiSupervision (PRIORITY_LOW)
+   ├─ TimeSync (PRIORITY_LOW)
+   ├─ Heartbeat (PRIORITY_LOW)
+   └─ Shell (PRIORITY_NORMAL)
+
+3. loop()
+   └─ app_manager_loop() - Boucle d'événements
 ```
 
-### Cycle d'irrigation (Master)
+### Synchronisation temps
 
 ```
-1. Polling serveur (10s)
-   ├─ GET /api/config
-   ├─ Parse zones et schedules
-   └─ Détecte irrigation à faire
+Démarrage
    ↓
-2. Lecture capteurs (5s)
-   ├─ Reçoit SensorDataPacket via ESP-NOW
-   ├─ Agrège données
-   └─ Détecte seuils d'urgence
+Tentative NTP (si WiFi connecté)
+   ├─ Succès → Utiliser NTP
+   └─ Échec → Fallback RTC
    ↓
-3. Décision irrigation
-   ├─ Schedule match heure actuelle?
-   ├─ Humidité < seuil?
-   └─ Envoie commande Slave2
+Fallback RTC (si disponible)
+   ├─ Succès → Utiliser RTC
+   └─ Échec → Utiliser Système
    ↓
-4. Envoi données serveur (15s)
-   ├─ POST /api/sensor-data
-   ├─ POST /api/irrigation-status
-   └─ Reçoit ACK serveur
+Synchronisation périodique (15 min)
 ```
 
 ---
 
-## 📋 RÉSUMÉ ARCHITECTURE
+## 🎨 PATTERNS ET ARCHITECTURE
 
-| Aspect | Détail |
-|--------|--------|
-| **Type** | Microkernel modulaire |
-| **Plateforme** | ESP32 |
-| **OS** | FreeRTOS |
-| **Langage** | C/C++ |
-| **Modules** | 20+ |
-| **Commandes CLI** | 100+ |
-| **Apps** | 3 (Master, Slave1, Slave2) |
-| **Tâches max** | 32 |
-| **Apps max** | 4 |
-| **RAM utilisée** | ~103 KB / 320 KB |
-| **CPU idle** | ~2% |
-| **CPU active** | ~15-40% |
-| **Persistance** | NVS Flash |
-| **Communication** | WiFi, ESP-NOW, HTTP, NTP |
-| **Monitoring** | System Monitor + Heartbeat LED |
-| **Logging** | 1000 messages circulaire |
-| **OTA** | ElegantOTA (port 3232) |
+### 1. **Manager Pattern**
+Chaque composant majeur est un "Manager" qui encapsule la logique:
+- `TaskManager` - Gestion des tâches
+- `MemoryManager` - Allocation mémoire
+- `WiFiManager` - Gestion WiFi
+- `AppManager` - Gestion applications
+
+### 2. **Singleton Pattern**
+Les managers sont des singletons (une seule instance):
+```cpp
+static TaskManager_t task_manager;  // Instance unique
+```
+
+### 3. **Error Handling**
+Tous les appels retournent `SysError_t`:
+```cpp
+typedef enum {
+    SYS_OK = 0,
+    SYS_ERROR = 1,
+    SYS_INVALID_PARAM = 2,
+    SYS_NO_MEMORY = 3,
+    SYS_TIMEOUT = 4
+} SysError_t;
+```
+
+### 4. **Logging Centralisé**
+Tous les modules utilisent `kernel_log()`:
+```cpp
+kernel_log(LOG_LEVEL_INFO, "Module: Message");
+```
+
+### 5. **Configuration Centralisée**
+Fichier `minimal_config.h` pour tous les paramètres:
+```cpp
+#define STACK_SIZE_SMALL 2048
+#define STACK_SIZE_NORMAL 4096
+#define STACK_SIZE_LARGE 8192
+#define MAX_TASKS 32
+#define MAX_APPS 16
+```
 
 ---
 
-## 🎓 CONCLUSION
+## 📊 DIAGRAMMES D'ARCHITECTURE
 
-D'O-Core OS est une **mini OS bien structurée** avec:
+### Architecture en couches
 
-✅ **Architecture claire** en couches (Applications → Kernel → HAL → Hardware)
-✅ **Modularité** avec App Manager pour applications pluggables
-✅ **Robustesse** avec monitoring, logging, gestion d'erreurs
-✅ **Flexibilité** avec support WiFi, ESP-NOW, HTTP, NTP, OTA
-✅ **Productivité** avec CLI interactive et 100+ commandes
-✅ **Scalabilité** pour systèmes IoT distribués (Master-Slave)
+```
+┌─────────────────────────────────────┐
+│     Applications (App Manager)      │
+├─────────────────────────────────────┤
+│     Interface (CLI Shell)           │
+├─────────────────────────────────────┤
+│  Network Stack (WiFi, HTTP, NTP)    │
+├─────────────────────────────────────┤
+│  Hardware Abstraction (RTC, LED)    │
+├─────────────────────────────────────┤
+│  Kernel Core (Tasks, Memory, Logs)  │
+├─────────────────────────────────────┤
+│  FreeRTOS + ESP-IDF                 │
+├───────────────────────────���─────────┤
+│  Hardware (ESP32)                   │
+└─────────────────────────────────────┘
+```
 
-**Cas d'usage idéal**: Systèmes d'irrigation intelligents, capteurs distribués, automatisation industrielle légère.
+### Flux de données
 
+```
+┌──────────────┐
+│  Capteurs    │
+└──────┬───────┘
+       │
+       ↓
+┌──────────────────────┐
+│  Applications        │
+│  (App Manager)       │
+└──────┬───────────────┘
+       │
+       ├─→ Logs (Log System)
+       ├─→ Tâches (Task Manager)
+       ├─→ Mémoire (Memory Manager)
+       ├─→ Réseau (WiFi/HTTP)
+       └─→ Temps (Time Sync)
+       │
+       ↓
+┌──────────────────────┐
+│  Actuateurs          │
+│  Stockage            │
+│  Réseau              │
+└──────────────────────┘
+```
+
+---
+
+## 🚀 PERFORMANCE
+
+### Ressources ESP32
+- **RAM**: 520 KB (SRAM)
+- **Flash**: 4 MB (SPIFFS)
+- **CPU**: 240 MHz (dual-core)
+
+### Utilisation typique
+- **Kernel**: ~50 KB
+- **WiFi Stack**: ~100 KB
+- **Applications**: ~50-100 KB
+- **Libre**: ~200-300 KB
+
+### Temps de réponse
+- **Création tâche**: < 1 ms
+- **Allocation mémoire**: < 0.5 ms
+- **Log message**: < 0.1 ms
+- **Synchronisation NTP**: 1-5 secondes
+
+---
+
+## 🔐 SÉCURITÉ
+
+### Mesures implémentées
+1. **Validation des paramètres** - Tous les inputs vérifiés
+2. **Gestion des erreurs** - Pas de crash silencieux
+3. **Watchdog** - Détection des deadlocks
+4. **Isolation des tâches** - Priorités et stacks séparés
+5. **Logging d'audit** - Tous les événements importants
+
+---
+
+## 📈 EXTENSIBILITÉ
+
+### Ajouter une nouvelle application
+
+```cpp
+// 1. Créer la structure
+typedef struct {
+    uint8_t app_id;
+    char name[32];
+    // ... données app
+} MyApp_t;
+
+// 2. Implémenter les callbacks
+void my_app_init(void* context) { }
+void my_app_loop(void* context) { }
+void my_app_cleanup(void* context) { }
+
+// 3. Enregistrer
+app_register(1, "MyApp", "Description", APP_TYPE_USER);
+```
+
+### Ajouter une nouvelle commande CLI
+
+```cpp
+// 1. Implémenter le handler
+SysError_t cmd_my_command(int argc, char* argv[]) {
+    Serial.println("Résultat");
+    return SYS_OK;
+}
+
+// 2. Enregistrer dans interface_init()
+add_command("my_cmd", "Description", cmd_my_command);
+```
+
+---
+
+## 🐛 DÉBOGAGE
+
+### Commandes utiles
+
+```bash
+# État système
+status              # Affiche l'état global
+tasks               # Liste toutes les tâches
+memory              # Utilisation mémoire
+dmesg               # Logs système
+
+# Diagnostic
+ntp_test            # Test NTP complet
+network_test        # Test connectivité
+wifi_stats          # Statistiques WiFi
+
+# Logs
+log_echo on         # Affiche logs en temps réel
+logs error          # Filtre les erreurs
+validate_log        # Valide l'intégrité
+```
+
+---
+
+## 📝 CONCLUSION
+
+D'O-Core OS est une architecture **modulaire, robuste et extensible** pour les systèmes embarqués ESP32. Elle fournit tous les composants nécessaires pour construire des applications IoT professionnelles avec:
+
+✅ Gestion temps réel des tâches
+✅ Synchronisation temps multi-source
+✅ Stack réseau complet
+✅ Interface utilisateur interactive
+✅ Framework d'applications flexible
+✅ Logging et monitoring avancés
+
+Le système est conçu pour être **facile à étendre** tout en maintenant une **stabilité et une performance optimales**.

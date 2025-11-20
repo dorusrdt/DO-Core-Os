@@ -4,6 +4,9 @@
 #include "../core/kernel.h"
 #include <Arduino.h>
 
+// ===== CONFIGURATION =====
+#define HEARTBEAT_LED_PIN 2  // GPIO2 (LED intégrée ESP32)
+
 // ===== ÉTATS DU HEARTBEAT =====
 
 typedef enum {

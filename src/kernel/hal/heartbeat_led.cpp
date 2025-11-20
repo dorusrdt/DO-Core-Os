@@ -1,5 +1,4 @@
 #include "heartbeat_led.h"
-#include "../../apps/irrig_common/irrig_types.h"
 
 // ===== VARIABLES GLOBALES =====
 

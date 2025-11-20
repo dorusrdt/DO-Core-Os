@@ -97,18 +97,8 @@ SysError_t cmd_time_source(int argc, char* argv[]);
 SysError_t cmd_time_sync(int argc, char* argv[]);
 SysError_t cmd_time_sources(int argc, char* argv[]);
 
-// Commandes Irrigation Configuration
-SysError_t cmd_irrig_config_server(int argc, char* argv[]);
-// Note: cmd_irrig_config_master/slave1/slave2 removed - MAC addresses are now hardcoded
-SysError_t cmd_irrig_config_show(int argc, char* argv[]);
-SysError_t cmd_irrig_config_save(int argc, char* argv[]);
-SysError_t cmd_irrig_config_load(int argc, char* argv[]);
-SysError_t cmd_irrig_config_reset(int argc, char* argv[]);
-
-// Commandes Irrigation Role Management
-SysError_t cmd_irrig_set_role(int argc, char* argv[]);
-SysError_t cmd_irrig_get_role(int argc, char* argv[]);
-SysError_t cmd_irrig_activate_role(int argc, char* argv[]);
+// Commandes ESP-NOW
+// Commandes ESP-NOW supprimées - structure de base uniquement
 
 // Reserved for future commands
 

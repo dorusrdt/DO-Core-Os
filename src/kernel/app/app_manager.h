@@ -107,6 +107,7 @@ uint32_t app_get_memory_usage(uint8_t app_id);
 uint32_t app_get_cpu_time(uint8_t app_id);
 bool app_is_running(uint8_t app_id);
 bool app_is_paused(uint8_t app_id);
+uint8_t app_get_id_by_name(const char* name);  // Retourne 0xFF si non trouvé
 
 #ifdef __cplusplus
 extern "C" {

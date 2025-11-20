@@ -1,5 +1,6 @@
 #include "interface.h"
 #include <WiFi.h>
+#include <Preferences.h>
 #include "../core/task_manager.h"
 #include "../core/memory_manager.h"
 #include "../core/system_monitor.h"
@@ -10,7 +11,6 @@
 #include "../app/app_manager.h"
 #include "../hal/rtc_manager.h"
 #include "../hal/time_sync_manager.h"
-#include "../../apps/irrig_common/irrig_cli_commands.h"
 #include <string.h>
 
 
@@ -33,6 +33,8 @@ extern SysError_t cmd_ota_status(int argc, char* argv[]);
 extern SysError_t cmd_ota_info(int argc, char* argv[]);
 extern SysError_t cmd_ota_stats(int argc, char* argv[]);
 extern SysError_t cmd_ota_url(int argc, char* argv[]);
+
+// Commandes ESP-NOW supprimées - structure de base uniquement
 
 // Commandes Irrigation : incluses via irrig_cli_commands.h
 
@@ -229,6 +231,8 @@ SysError_t interface_init(void) {
     add_command("time_sync", "Force time synchronization", cmd_time_sync);
     add_command("time_sources", "Show detailed time sources info", cmd_time_sources);
 
+    // Commandes ESP-NOW supprimées - structure de base uniquement
+
     // Commandes OTA
     add_command("ota_start", "Start OTA web server", cmd_ota_start);
     add_command("ota_stop", "Stop OTA web server", cmd_ota_stop);
@@ -236,19 +240,6 @@ SysError_t interface_init(void) {
     add_command("ota_info", "Show firmware version info", cmd_ota_info);
     add_command("ota_stats", "Show OTA statistics", cmd_ota_stats);
     add_command("ota_url", "Show OTA update URL", cmd_ota_url);
-
-    // Commandes Irrigation Configuration
-    add_command("irrig_config_server", "Configure FastAPI server URL", cmd_irrig_config_server);
-    // Note: irrig_config_master/slave1/slave2 removed - MAC addresses are now hardcoded
-    add_command("irrig_config_show", "Show current configuration", cmd_irrig_config_show);
-    add_command("irrig_config_save", "Save configuration to NVS", cmd_irrig_config_save);
-    add_command("irrig_config_load", "Load configuration from NVS", cmd_irrig_config_load);
-    add_command("irrig_config_reset", "Reset configuration to defaults", cmd_irrig_config_reset);
-
-    // Commandes Irrigation Role Management
-    add_command("irrig_set_role", "Set device role (master/slave1/slave2)", cmd_irrig_set_role);
-    add_command("irrig_get_role", "Show current device role", cmd_irrig_get_role);
-    add_command("irrig_activate_role", "Activate app for configured role", cmd_irrig_activate_role);
 
     Serial.printf("Interface initialized with %d/%d commands\n", command_count, MAX_COMMANDS);
 
@@ -2052,4 +2043,6 @@ SysError_t cmd_time_source(int argc, char* argv[]) {
     Serial.println("==============================");
     return SYS_OK;
 }
+
+// Commandes ESP-NOW supprimées - structure de base uniquement
 
