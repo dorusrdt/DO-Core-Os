@@ -8,17 +8,17 @@ static uint8_t master_app_id = ESPNOW_MASTER_APP_ID;
 
 void master_app_start(void) {
     kernel_log(LOG_LEVEL_INFO, "Master: App starting");
-    
+
     // TODO: Initialiser ESP-NOW Master ici
-    
+
     kernel_log(LOG_LEVEL_INFO, "Master: App started");
 }
 
 void master_app_stop(void) {
     kernel_log(LOG_LEVEL_INFO, "Master: App stopping");
-    
+
     // TODO: Nettoyer les ressources ESP-NOW Master ici
-    
+
     kernel_log(LOG_LEVEL_INFO, "Master: App stopped");
 }
 

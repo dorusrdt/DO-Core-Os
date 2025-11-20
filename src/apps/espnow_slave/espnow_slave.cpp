@@ -8,17 +8,17 @@ static uint8_t slave_app_id = ESPNOW_SLAVE_APP_ID;
 
 void slave_app_start(void) {
     kernel_log(LOG_LEVEL_INFO, "Slave: App starting");
-    
+
     // TODO: Initialiser ESP-NOW Slave ici
-    
+
     kernel_log(LOG_LEVEL_INFO, "Slave: App started");
 }
 
 void slave_app_stop(void) {
     kernel_log(LOG_LEVEL_INFO, "Slave: App stopping");
-    
+
     // TODO: Nettoyer les ressources ESP-NOW Slave ici
-    
+
     kernel_log(LOG_LEVEL_INFO, "Slave: App stopped");
 }
 
