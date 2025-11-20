@@ -26,6 +26,7 @@
 // Apps ESP-NOW Master/Slave
 #include "apps/espnow_master/espnow_master.h"
 #include "apps/espnow_slave/espnow_slave.h"
+#include "apps/espnow_simple/espnow_simple.h"
 
 // Variables globales du système
 static bool system_initialized = false;
@@ -576,14 +577,16 @@ void setup() {
         return;
     }
 
-    // Enregistrer les applications Master et Slave (même firmware)
+    // Enregistrer les applications ESP-NOW
     {
         SysError_t r1 = espnow_master_register_app();
         SysError_t r2 = espnow_slave_register_app();
-        if (r1 == SYS_OK && r2 == SYS_OK) {
-            kernel_log(LOG_LEVEL_INFO, "Registered apps: espnow_master(id=%d), espnow_slave(id=%d)", ESPNOW_MASTER_APP_ID, ESPNOW_SLAVE_APP_ID);
+        SysError_t r3 = espnow_simple_register_app();
+        if (r1 == SYS_OK && r2 == SYS_OK && r3 == SYS_OK) {
+            kernel_log(LOG_LEVEL_INFO, "Registered apps: espnow_master(id=%d), espnow_slave(id=%d), espnow_simple(id=%d)",
+                      ESPNOW_MASTER_APP_ID, ESPNOW_SLAVE_APP_ID, ESPNOW_SIMPLE_APP_ID);
         } else {
-            kernel_log(LOG_LEVEL_ERROR, "Failed to register espnow apps (master=%d, slave=%d)", r1, r2);
+            kernel_log(LOG_LEVEL_ERROR, "Failed to register espnow apps (master=%d, slave=%d, simple=%d)", r1, r2, r3);
         }
     }
 
@@ -711,6 +714,7 @@ void setup() {
     Serial.println("📋 Registered Apps:");
     Serial.println("  ID 10: espnow_master");
     Serial.println("  ID 11: espnow_slave");
+    Serial.println("  ID 12: espnow_simple (Display MAC)");
     Serial.println();
     Serial.println("🎯 Available Commands:");
     Serial.println("  help                - Show all commands");
