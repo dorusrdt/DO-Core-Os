@@ -4,7 +4,7 @@
 #include "../../kernel/core/kernel.h"
 #include <Arduino.h>
 
-#define ESPNOW_SIMPLE_APP_ID  12
+#define ESPNOW_SIMPLE_APP_ID  13
 
 // API d'enregistrement
 SysError_t espnow_simple_register_app();

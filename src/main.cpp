@@ -23,9 +23,10 @@
 #include "kernel/hal/heartbeat_led.h"
 #include <time.h>
 
-// Apps ESP-NOW Master/Slave
-#include "apps/espnow_master/espnow_master.h"
-#include "apps/espnow_slave/espnow_slave.h"
+// Apps ESP32
+#include "apps/ESP32_master/ESP32_master.h"
+#include "apps/ESP32_sensor/ESP32_sensor.h"
+#include "apps/ESP32_com/ESP32_com.h"
 #include "apps/espnow_simple/espnow_simple.h"
 
 // Variables globales du système
@@ -577,24 +578,25 @@ void setup() {
         return;
     }
 
-    // Enregistrer les applications ESP-NOW
+    // Enregistrer les applications ESP32
     {
-        SysError_t r1 = espnow_master_register_app();
-        SysError_t r2 = espnow_slave_register_app();
-        SysError_t r3 = espnow_simple_register_app();
-        if (r1 == SYS_OK && r2 == SYS_OK && r3 == SYS_OK) {
-            kernel_log(LOG_LEVEL_INFO, "Registered apps: espnow_master(id=%d), espnow_slave(id=%d), espnow_simple(id=%d)",
-                      ESPNOW_MASTER_APP_ID, ESPNOW_SLAVE_APP_ID, ESPNOW_SIMPLE_APP_ID);
+        SysError_t r1 = ESP32_master_register_app();
+        SysError_t r2 = ESP32_sensor_register_app();
+        SysError_t r3 = ESP32_com_register_app();
+        SysError_t r4 = espnow_simple_register_app();
+        if (r1 == SYS_OK && r2 == SYS_OK && r3 == SYS_OK && r4 == SYS_OK) {
+            kernel_log(LOG_LEVEL_INFO, "Registered apps: ESP32_master(id=%d), ESP32_sensor(id=%d), ESP32_com(id=%d), espnow_simple(id=%d)",
+                      ESP32_MASTER_APP_ID, ESP32_SENSOR_APP_ID, ESP32_COM_APP_ID, ESPNOW_SIMPLE_APP_ID);
         } else {
-            kernel_log(LOG_LEVEL_ERROR, "Failed to register espnow apps (master=%d, slave=%d, simple=%d)", r1, r2, r3);
+            kernel_log(LOG_LEVEL_ERROR, "Failed to register ESP32 apps (master=%d, sensor=%d, com=%d, simple=%d)", r1, r2, r3, r4);
         }
     }
 
     // Initialiser le WiFi (sans connexion automatique)
     SERIAL_PRINTLN_MINIMAL("WiFi init (no auto)");
     kernel_log(LOG_LEVEL_INFO, "WiFi init");
-    WiFi.mode(WIFI_STA);
-    SERIAL_PRINTLN_MINIMAL("WiFi STA ready");
+    WiFi.mode(WIFI_AP_STA);  // Support AP + STA pour les apps master/slave
+    SERIAL_PRINTLN_MINIMAL("WiFi AP+STA ready");
 
     // Tenter la connexion automatique si des credentials sont sauvegardés
     SERIAL_PRINTLN_MINIMAL("Check saved WiFi...");
@@ -712,9 +714,10 @@ void setup() {
     // Afficher les apps enregistrées
     Serial.println();
     Serial.println("📋 Registered Apps:");
-    Serial.println("  ID 10: espnow_master");
-    Serial.println("  ID 11: espnow_slave");
-    Serial.println("  ID 12: espnow_simple (Display MAC)");
+    Serial.println("  ID 10: ESP32_master");
+    Serial.println("  ID 11: ESP32_sensor");
+    Serial.println("  ID 12: ESP32_com");
+    Serial.println("  ID 13: espnow_simple (Display MAC)");
     Serial.println();
     Serial.println("🎯 Available Commands:");
     Serial.println("  help                - Show all commands");
