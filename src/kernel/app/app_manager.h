@@ -8,7 +8,7 @@
 #define MAX_APPS 4
 #define APP_NAME_MAX_LENGTH 16
 #define APP_DESCRIPTION_MAX_LENGTH 32
-#define APP_STACK_SIZE_DEFAULT 8192  // Taille par défaut de la pile pour les applications (augmenté pour éviter stack overflow)
+#define APP_STACK_SIZE_DEFAULT 4096  // Taille par défaut de la pile pour les applications (réduit pour économiser la mémoire)
 #define APP_PRIORITY_DEFAULT 5
 
 // États d'une application

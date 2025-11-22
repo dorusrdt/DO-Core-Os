@@ -3,6 +3,11 @@
 #include "../../kernel/core/log_system_optimized.h"
 #include <WiFi.h>
 #include <WebSocketsClient.h>
+#include <ArduinoJson.h>
+#include <cstring>
+
+#define SENSOR_LOG(level, fmt, ...) \
+    kernel_log(level, "[ESP32_sensor] " fmt, ##__VA_ARGS__)
 
 // Configuration AP du Master
 static const char* master_ap_ssid = "ESP32_MASTER";
@@ -10,32 +15,112 @@ static const char* master_ap_pass = "12345678";
 static const char* master_ip = "192.168.4.1";
 static const uint16_t master_port = 81;
 
+// Hardware Configuration
+#define MAX_SENSORS 12
+
+// Moisture sensor pins (exactly like versio)
+#define MOISTURE_PIN_1  32
+#define MOISTURE_PIN_2  33
+#define MOISTURE_PIN_3  34
+#define MOISTURE_PIN_4  35
+#define MOISTURE_PIN_5  36
+#define MOISTURE_PIN_6  39
+#define MOISTURE_PIN_7  25
+#define MOISTURE_PIN_8  26
+#define MOISTURE_PIN_9  27
+#define MOISTURE_PIN_10 14
+#define MOISTURE_PIN_11 12
+#define MOISTURE_PIN_12 13
+
+static const int moisturePins[MAX_SENSORS] = {
+    MOISTURE_PIN_1, MOISTURE_PIN_2, MOISTURE_PIN_3, MOISTURE_PIN_4,
+    MOISTURE_PIN_5, MOISTURE_PIN_6, MOISTURE_PIN_7, MOISTURE_PIN_8,
+    MOISTURE_PIN_9, MOISTURE_PIN_10, MOISTURE_PIN_11, MOISTURE_PIN_12
+};
+
 static WebSocketsClient* webSocket = nullptr;
 static bool app_running = false;
+
+// Sensor readings storage
+static float sensorReadings[MAX_SENSORS];
+static unsigned long lastSensorRead = 0;
+
+// Read all moisture sensors (exactly like versio logic)
+static void readAllSensors() {
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        // Read analog value (0-4095 for ESP32, typically 0-3.3V)
+        int rawValue = analogRead(moisturePins[i]);
+
+        // Convert to percentage (0-100%)
+        // Typical moisture sensors: higher value = more moisture
+        // Adjust calibration based on your sensor characteristics
+        // For now, using simple linear mapping: 0-4095 -> 0-100%
+        // In production, you may need to calibrate: dry=4095 (0%), wet=0 (100%)
+        float moisture = map(rawValue, 0, 4095, 100, 0); // Inverted: lower ADC = more moisture
+
+        // Clamp to realistic range
+        sensorReadings[i] = constrain(moisture, 0, 100);
+
+        SENSOR_LOG(LOG_LEVEL_DEBUG, "Sensor %d (pin %d): raw=%d, moisture=%.1f%%",
+                  i + 1, moisturePins[i], rawValue, sensorReadings[i]);
+    }
+}
+
+// Send sensor data to master via WebSocket
+static void sendSensorData() {
+    if (!webSocket || !webSocket->isConnected()) {
+        SENSOR_LOG(LOG_LEVEL_WARN, "Cannot send sensor data: WebSocket not connected");
+        return;
+    }
+
+    // Create JSON payload with sensor readings (optimisé)
+    // 12 capteurs (s01-s12) + timestamp + deviceType ≈ 300 bytes max
+    // On alloue 512 bytes pour marge de sécurité
+    DynamicJsonDocument doc(512);
+
+    // Add sensor readings with IDs s01-s12
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        String sensorId;
+        if (i < 9) {
+            sensorId = "s0" + String(i + 1);
+        } else {
+            sensorId = "s" + String(i + 1);
+        }
+        doc[sensorId] = sensorReadings[i];
+    }
+
+    doc["timestamp"] = millis();
+    doc["deviceType"] = "sensor";
+
+    String payload;
+    serializeJson(doc, payload);
+
+    webSocket->sendTXT(payload);
+
+    SENSOR_LOG(LOG_LEVEL_INFO, "Sensor data sent to master (len=%u bytes)", payload.length());
+    SENSOR_LOG(LOG_LEVEL_DEBUG, "Payload content: %s", payload.c_str());
+}
 
 // Gestionnaire d'événements WebSocket
 static void onWebSocketEvent_sensor(WStype_t type, uint8_t * payload, size_t length) {
     switch(type) {
         case WStype_DISCONNECTED:
-            kernel_log(LOG_LEVEL_WARN, "WebSocket disconnected from master");
+            SENSOR_LOG(LOG_LEVEL_WARN, "WebSocket disconnected from master");
             break;
         case WStype_CONNECTED:
-            kernel_log(LOG_LEVEL_INFO, "WebSocket connected to master");
+            SENSOR_LOG(LOG_LEVEL_INFO, "WebSocket connected to master");
             break;
         case WStype_TEXT:
-            kernel_log(LOG_LEVEL_INFO, "[Master → Slave] %.*s", length, payload);
-            // Ici on peut traiter les messages du master
+            SENSOR_LOG(LOG_LEVEL_DEBUG, "[Master → Sensor] %.*s", length, payload);
+            // Master may send commands, but sensor mainly sends data
             break;
         case WStype_BIN:
-            kernel_log(LOG_LEVEL_INFO, "WebSocket binary message received");
+            SENSOR_LOG(LOG_LEVEL_DEBUG, "WebSocket binary message received");
             break;
         case WStype_ERROR:
-            kernel_log(LOG_LEVEL_ERROR, "WebSocket error");
+            SENSOR_LOG(LOG_LEVEL_ERROR, "WebSocket error");
             break;
-        case WStype_FRAGMENT_TEXT_START:
-        case WStype_FRAGMENT_BIN_START:
-        case WStype_FRAGMENT:
-        case WStype_FRAGMENT_FIN:
+        default:
             break;
     }
 }
@@ -46,37 +131,53 @@ static void ESP32_sensor_app_start(void) {
         return;
     }
 
-    kernel_log(LOG_LEVEL_INFO, "Starting ESP32 Sensor (WebSocket)...");
+    SENSOR_LOG(LOG_LEVEL_INFO, "Starting ESP32 Sensor (12 moisture sensors)...");
+
+    // Initialize sensor pins (analog inputs don't need pinMode, but we can set resolution)
+    // ESP32 ADC resolution: 12-bit (0-4095)
+    analogSetWidth(12);
+    analogSetAttenuation(ADC_11db); // 0-3.3V range
+
+    SENSOR_LOG(LOG_LEVEL_INFO, "Initialized %d moisture sensor pins", MAX_SENSORS);
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        SENSOR_LOG(LOG_LEVEL_DEBUG, "  Sensor %d: GPIO %d", i + 1, moisturePins[i]);
+    }
 
     // Connexion au réseau AP du Master
-    kernel_log(LOG_LEVEL_INFO, "Connecting to master AP: %s", master_ap_ssid);
+    SENSOR_LOG(LOG_LEVEL_INFO, "Connecting to master AP: %s", master_ap_ssid);
     WiFi.begin(master_ap_ssid, master_ap_pass);
 
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
         delay(500);
+        SENSOR_LOG(LOG_LEVEL_DEBUG, "Waiting for AP connection... status=%d", WiFi.status());
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-        kernel_log(LOG_LEVEL_ERROR, "Failed to connect to master AP");
+        SENSOR_LOG(LOG_LEVEL_ERROR, "Failed to connect to master AP");
         return;
     }
 
-    kernel_log(LOG_LEVEL_INFO, "Connected to master AP!");
-    kernel_log(LOG_LEVEL_INFO, "Slave IP: %s", WiFi.localIP().toString().c_str());
+    SENSOR_LOG(LOG_LEVEL_INFO, "Connected to master AP!");
+    SENSOR_LOG(LOG_LEVEL_INFO, "Sensor device IP: %s", WiFi.localIP().toString().c_str());
 
     // WebSocket client vers le Master
     webSocket = new WebSocketsClient();
     if (!webSocket) {
-        kernel_log(LOG_LEVEL_ERROR, "Failed to create WebSocket client");
+        SENSOR_LOG(LOG_LEVEL_ERROR, "Failed to create WebSocket client");
         return;
     }
 
     webSocket->begin(master_ip, master_port, "/");
     webSocket->onEvent(onWebSocketEvent_sensor);
-    webSocket->setReconnectInterval(5000); // Reconexion automatique
+    webSocket->setReconnectInterval(5000); // Reconnexion automatique
 
-    kernel_log(LOG_LEVEL_INFO, "WebSocket client started, connecting to %s:%d", master_ip, master_port);
+    SENSOR_LOG(LOG_LEVEL_INFO, "WebSocket client started, connecting to %s:%d", master_ip, master_port);
+
+    // Initialize sensor readings
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        sensorReadings[i] = 50.0; // Default value
+    }
 
     app_running = true;
 }
@@ -87,7 +188,7 @@ static void ESP32_sensor_app_stop(void) {
         return;
     }
 
-    kernel_log(LOG_LEVEL_INFO, "Stopping ESP-NOW Slave...");
+    SENSOR_LOG(LOG_LEVEL_INFO, "Stopping ESP32 Sensor...");
 
     if (webSocket) {
         webSocket->disconnect();
@@ -108,19 +209,29 @@ static void ESP32_sensor_app_loop(void) {
 
     webSocket->loop();
 
-    // Envoyer des données périodiques au master
+    unsigned long currentTime = millis();
+
+    // Read sensors every 5 seconds (exactly like versio)
+    if (currentTime - lastSensorRead >= 5000) {
+        readAllSensors();
+        lastSensorRead = currentTime;
+    }
+
+    // Send sensor data to master every 5 seconds (exactly like versio)
     static unsigned long lastSend = 0;
-    if (millis() - lastSend > 5000) { // Toutes les 5 secondes
-        lastSend = millis();
+    if (currentTime - lastSend >= 5000) {
+        lastSend = currentTime;
 
         if (webSocket->isConnected()) {
-            char message[64];
-            snprintf(message, sizeof(message), "Hello Master! Slave IP: %s",
-                    WiFi.localIP().toString().c_str());
-            webSocket->sendTXT(message);
+            sendSensorData();
+        } else {
+            SENSOR_LOG(LOG_LEVEL_WARN, "Cannot send sensor data: WebSocket disconnected");
         }
     }
 }
+
+// ID réel assigné par le système (séquence, pas forcément 11)
+static uint8_t esp32_sensor_real_app_id = 0;
 
 // Enregistrement de l'application
 SysError_t ESP32_sensor_register_app() {
@@ -131,6 +242,15 @@ SysError_t ESP32_sensor_register_app() {
     };
 
     uint8_t app_id;
-    return app_register("ESP32_sensor", "WebSocket Sensor Application",
+    SysError_t result = app_register("ESP32_sensor", "Moisture Sensor Application",
                        APP_TYPE_USER, &callbacks, &app_id);
+    if (result == SYS_OK) {
+        esp32_sensor_real_app_id = app_id;
+    }
+    return result;
+}
+
+// Obtenir l'ID réel assigné par le système
+uint8_t ESP32_sensor_get_app_id(void) {
+    return esp32_sensor_real_app_id;
 }

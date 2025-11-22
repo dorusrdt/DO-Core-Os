@@ -14,7 +14,6 @@
 #include "kernel/interface/interface.h"
 #include "kernel/network/wifi_manager.h"
 #include "kernel/network/ntp_manager.h"
-#include "kernel/network/http_client.h"
 #include "kernel/network/ota_manager.h"
 #include "kernel/app/app_manager.h"
 #include "kernel/core/minimal_config.h"
@@ -27,7 +26,9 @@
 #include "apps/ESP32_master/ESP32_master.h"
 #include "apps/ESP32_sensor/ESP32_sensor.h"
 #include "apps/ESP32_com/ESP32_com.h"
-#include "apps/espnow_simple/espnow_simple.h"
+
+// Application Auto-Start Configuration (Kconfig-style)
+#include "app_autostart_config.h"
 
 // Variables globales du système
 static bool system_initialized = false;
@@ -505,16 +506,6 @@ void setup() {
         return;
     }
 
-    // Initialiser le module HTTP Client
-    SERIAL_PRINTLN_MINIMAL("HTTP Client init...");
-    kernel_log(LOG_LEVEL_INFO, "HTTP Client init");
-    SysError_t http_result = http_client_module_init();
-    if (http_result != SYS_OK) {
-        SERIAL_PRINTLN_MINIMAL("HTTP Client fail");
-        kernel_log(LOG_LEVEL_ERROR, "HTTP Client init failed");
-        return;
-    }
-    SERIAL_PRINTLN_MINIMAL("HTTP Client OK");
 
     // Initialiser le heartbeat LED
     SERIAL_PRINTLN_MINIMAL("Heartbeat init...");
@@ -583,13 +574,71 @@ void setup() {
         SysError_t r1 = ESP32_master_register_app();
         SysError_t r2 = ESP32_sensor_register_app();
         SysError_t r3 = ESP32_com_register_app();
-        SysError_t r4 = espnow_simple_register_app();
-        if (r1 == SYS_OK && r2 == SYS_OK && r3 == SYS_OK && r4 == SYS_OK) {
-            kernel_log(LOG_LEVEL_INFO, "Registered apps: ESP32_master(id=%d), ESP32_sensor(id=%d), ESP32_com(id=%d), espnow_simple(id=%d)",
-                      ESP32_MASTER_APP_ID, ESP32_SENSOR_APP_ID, ESP32_COM_APP_ID, ESPNOW_SIMPLE_APP_ID);
+        if (r1 == SYS_OK && r2 == SYS_OK && r3 == SYS_OK) {
+            kernel_log(LOG_LEVEL_INFO, "Registered apps: ESP32_master(id=%d), ESP32_sensor(id=%d), ESP32_com(id=%d)",
+                      ESP32_master_get_app_id(), ESP32_sensor_get_app_id(), ESP32_com_get_app_id());
         } else {
-            kernel_log(LOG_LEVEL_ERROR, "Failed to register ESP32 apps (master=%d, sensor=%d, com=%d, simple=%d)", r1, r2, r3, r4);
+            kernel_log(LOG_LEVEL_ERROR, "Failed to register ESP32 apps (master=%d, sensor=%d, com=%d)", r1, r2, r3);
         }
+    }
+
+    // Auto-start applications based on configuration (Kconfig-style)
+    {
+        kernel_log(LOG_LEVEL_INFO, "Checking auto-start configuration...");
+
+        #if APP_AUTOSTART_ESP32_MASTER_ENABLED == 1
+        {
+            uint8_t app_id = ESP32_master_get_app_id();
+            if (app_id > 0) {
+                SysError_t result = app_start(app_id);
+                if (result == SYS_OK) {
+                    kernel_log(LOG_LEVEL_INFO, "Auto-started: ESP32_master (id=%d)", app_id);
+                } else {
+                    kernel_log(LOG_LEVEL_WARN, "Failed to auto-start ESP32_master: %d", result);
+                }
+            } else {
+                kernel_log(LOG_LEVEL_ERROR, "ESP32_master not registered, cannot auto-start");
+            }
+        }
+        #else
+            kernel_log(LOG_LEVEL_DEBUG, "ESP32_master auto-start disabled");
+        #endif
+
+        #if APP_AUTOSTART_ESP32_SENSOR_ENABLED == 1
+        {
+            uint8_t app_id = ESP32_sensor_get_app_id();
+            if (app_id > 0) {
+                SysError_t result = app_start(app_id);
+                if (result == SYS_OK) {
+                    kernel_log(LOG_LEVEL_INFO, "Auto-started: ESP32_sensor (id=%d)", app_id);
+                } else {
+                    kernel_log(LOG_LEVEL_WARN, "Failed to auto-start ESP32_sensor: %d", result);
+        }
+            } else {
+                kernel_log(LOG_LEVEL_ERROR, "ESP32_sensor not registered, cannot auto-start");
+            }
+        }
+        #else
+            kernel_log(LOG_LEVEL_DEBUG, "ESP32_sensor auto-start disabled");
+        #endif
+
+        #if APP_AUTOSTART_ESP32_COM_ENABLED == 1
+        {
+            uint8_t app_id = ESP32_com_get_app_id();
+            if (app_id > 0) {
+                SysError_t result = app_start(app_id);
+                if (result == SYS_OK) {
+                    kernel_log(LOG_LEVEL_INFO, "Auto-started: ESP32_com (id=%d)", app_id);
+                } else {
+                    kernel_log(LOG_LEVEL_WARN, "Failed to auto-start ESP32_com: %d", result);
+                }
+            } else {
+                kernel_log(LOG_LEVEL_ERROR, "ESP32_com not registered, cannot auto-start");
+            }
+        }
+        #else
+            kernel_log(LOG_LEVEL_DEBUG, "ESP32_com auto-start disabled");
+        #endif
     }
 
     // Initialiser le WiFi (sans connexion automatique)
@@ -717,7 +766,6 @@ void setup() {
     Serial.println("  ID 10: ESP32_master");
     Serial.println("  ID 11: ESP32_sensor");
     Serial.println("  ID 12: ESP32_com");
-    Serial.println("  ID 13: espnow_simple (Display MAC)");
     Serial.println();
     Serial.println("🎯 Available Commands:");
     Serial.println("  help                - Show all commands");

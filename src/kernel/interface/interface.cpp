@@ -6,7 +6,6 @@
 #include "../core/system_monitor.h"
 #include "../network/wifi_manager.h"
 #include "../network/ntp_manager.h"
-#include "../network/http_client.h"
 #include "../network/ota_manager.h"
 #include "../app/app_manager.h"
 #include "../hal/rtc_manager.h"
@@ -15,16 +14,6 @@
 
 
 // Inclure les commandes HTTP
-extern SysError_t cmd_http_config(int argc, char* argv[]);
-extern SysError_t cmd_http_get(int argc, char* argv[]);
-extern SysError_t cmd_http_post(int argc, char* argv[]);
-extern SysError_t cmd_http_delete(int argc, char* argv[]);
-extern SysError_t cmd_http_patch(int argc, char* argv[]);
-extern SysError_t cmd_http_head(int argc, char* argv[]);
-extern SysError_t cmd_http_options(int argc, char* argv[]);
-extern SysError_t cmd_http_test(int argc, char* argv[]);
-extern SysError_t cmd_http_stats(int argc, char* argv[]);
-extern SysError_t cmd_http_debug(int argc, char* argv[]);
 
 // Inclure les commandes OTA
 extern SysError_t cmd_ota_start(int argc, char* argv[]);
@@ -206,18 +195,6 @@ SysError_t interface_init(void) {
     add_command("app_resume_all", "Resume all paused applications", cmd_app_resume_all);
 
 
-    // Commandes HTTP Client
-    add_command("http_config", "Configure HTTP client settings", cmd_http_config);
-    add_command("http_get", "Send HTTP GET request", cmd_http_get);
-    add_command("http_post", "Send HTTP POST request", cmd_http_post);
-    add_command("http_put", "Send HTTP PUT request", cmd_http_put);
-    add_command("http_delete", "Send HTTP DELETE request", cmd_http_delete);
-    add_command("http_patch", "Send HTTP PATCH request", cmd_http_patch);
-    add_command("http_head", "Send HTTP HEAD request", cmd_http_head);
-    add_command("http_options", "Send HTTP OPTIONS request", cmd_http_options);
-    add_command("http_test", "Run HTTP client tests", cmd_http_test);
-    add_command("http_stats", "Show HTTP client statistics", cmd_http_stats);
-    add_command("http_debug", "Debug HTTP client", cmd_http_debug);
 
     add_command("network_test", "Test network connectivity and DNS resolution", cmd_network_test);
 

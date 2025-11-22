@@ -7,5 +7,7 @@
 
 // API d'enregistrement
 SysError_t ESP32_com_register_app();
+// Obtenir l'ID réel assigné par le système
+uint8_t ESP32_com_get_app_id(void);
 
 #endif // ESP32_COM_H

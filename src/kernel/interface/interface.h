@@ -74,18 +74,6 @@ SysError_t cmd_network_test(int argc, char* argv[]);
 // Network commands - To be implemented
 
 
-// Commandes HTTP Client
-SysError_t cmd_http_config(int argc, char* argv[]);
-SysError_t cmd_http_get(int argc, char* argv[]);
-SysError_t cmd_http_post(int argc, char* argv[]);
-SysError_t cmd_http_put(int argc, char* argv[]);
-SysError_t cmd_http_delete(int argc, char* argv[]);
-SysError_t cmd_http_patch(int argc, char* argv[]);
-SysError_t cmd_http_head(int argc, char* argv[]);
-SysError_t cmd_http_options(int argc, char* argv[]);
-SysError_t cmd_http_test(int argc, char* argv[]);
-SysError_t cmd_http_stats(int argc, char* argv[]);
-SysError_t cmd_http_debug(int argc, char* argv[]);
 
 // Commandes RTC et Time Sync
 SysError_t cmd_rtc_status(int argc, char* argv[]);
