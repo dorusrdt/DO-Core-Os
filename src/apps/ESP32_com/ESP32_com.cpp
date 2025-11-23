@@ -61,7 +61,8 @@ static void onWebSocketEvent_com(WStype_t type, uint8_t * payload, size_t length
             DeserializationError error = deserializeJson(doc, message);
 
             if (error) {
-                COM_LOG(LOG_LEVEL_WARN, "Failed to parse command JSON: %s", error.c_str());
+                COM_LOG(LOG_LEVEL_ERROR, "❌ Failed to parse command JSON: %s | Raw: %.*s",
+                       error.c_str(), length, payload);
                 break;
             }
 
@@ -72,17 +73,36 @@ static void onWebSocketEvent_com(WStype_t type, uint8_t * payload, size_t length
                 int physicalZoneNumber = doc["physicalZoneNumber"] | 1;
                 int durationSeconds = doc["durationSeconds"] | 60;
 
-                COM_LOG(LOG_LEVEL_INFO, "Received irrigation command: zoneId=%s, zone=%d, duration=%ds",
-                       zoneId.c_str(), physicalZoneNumber, durationSeconds);
+                // Calculate time breakdown for better logging
+                unsigned long minutes = durationSeconds / 60;
+                unsigned long seconds = durationSeconds % 60;
+
+                COM_LOG(LOG_LEVEL_INFO, "📥 Received START irrigation command:");
+                COM_LOG(LOG_LEVEL_INFO, "   Zone ID: %s", zoneId.c_str());
+                COM_LOG(LOG_LEVEL_INFO, "   Physical Zone: %d", physicalZoneNumber);
+                if (minutes > 0) {
+                    COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu min %lu sec (%d total seconds)",
+                           minutes, seconds, durationSeconds);
+                } else {
+                    COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu sec", seconds);
+                }
 
                 startIrrigation(physicalZoneNumber, durationSeconds);
 
             } else if (action == "stop_irrigation") {
                 String zoneId = doc["zoneId"].as<String>();
 
-                COM_LOG(LOG_LEVEL_INFO, "Received stop irrigation command: zoneId=%s", zoneId.c_str());
+                COM_LOG(LOG_LEVEL_INFO, "📥 Received STOP irrigation command:");
+                COM_LOG(LOG_LEVEL_INFO, "   Zone ID: %s", zoneId.c_str());
+                if (isIrrigating && activeZoneNumber > 0) {
+                    COM_LOG(LOG_LEVEL_INFO, "   Currently irrigating Zone %d - stopping now", activeZoneNumber);
+                } else {
+                    COM_LOG(LOG_LEVEL_INFO, "   No active irrigation to stop");
+                }
 
                 stopIrrigation();
+            } else {
+                COM_LOG(LOG_LEVEL_WARN, "⚠️  Unknown action received: %s", action.c_str());
             }
             break;
         }
@@ -112,22 +132,35 @@ static void startIrrigation(int zoneNumber, int durationSeconds) {
         delay(500); // Brief delay
     }
 
-    COM_LOG(LOG_LEVEL_INFO, "Starting irrigation: Zone %d, Duration: %ds", zoneNumber, durationSeconds);
+    // Calculate time breakdown for better logging
+    unsigned long minutes = durationSeconds / 60;
+    unsigned long seconds = durationSeconds % 60;
+
+    COM_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation:");
+    COM_LOG(LOG_LEVEL_INFO, "   Zone: %d (GPIO %d)", zoneNumber, zoneRelayPins[zoneNumber - 1]);
+    if (minutes > 0) {
+        COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu min %lu sec (%d total seconds)",
+               minutes, seconds, durationSeconds);
+    } else {
+        COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu sec", seconds);
+    }
 
     // Turn on pump first (active LOW - set to LOW to activate)
     digitalWrite(PUMP_RELAY_PIN, LOW);
-    COM_LOG(LOG_LEVEL_INFO, "Pump: ON (GPIO %d = LOW)", PUMP_RELAY_PIN);
+    COM_LOG(LOG_LEVEL_INFO, "   ✅ Pump: ON (GPIO %d = LOW)", PUMP_RELAY_PIN);
 
     // Turn on zone relay (active LOW - set to LOW to activate)
     int zoneIndex = zoneNumber - 1;
     digitalWrite(zoneRelayPins[zoneIndex], LOW);
-    COM_LOG(LOG_LEVEL_INFO, "Zone %d relay: ON (GPIO %d = LOW)", zoneNumber, zoneRelayPins[zoneIndex]);
+    COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d relay: ON (GPIO %d = LOW)", zoneNumber, zoneRelayPins[zoneIndex]);
 
     isIrrigating = true;
     activeZoneNumber = zoneNumber;
     irrigationEndTime = millis() + (durationSeconds * 1000);
 
-    COM_LOG(LOG_LEVEL_INFO, "Irrigation started - will stop in %d seconds", durationSeconds);
+    unsigned long endTimeMs = irrigationEndTime;
+    unsigned long endTimeSec = endTimeMs / 1000;
+    COM_LOG(LOG_LEVEL_INFO, "   ⏱️  Irrigation will stop automatically at %lu seconds from now", endTimeSec);
 }
 
 // Stop irrigation (exactly like versio logic - active LOW)
@@ -137,31 +170,57 @@ static void stopIrrigation() {
         return;
     }
 
-    COM_LOG(LOG_LEVEL_INFO, "Stopping irrigation: Zone %d", activeZoneNumber);
+    int stoppedZone = activeZoneNumber;
+    COM_LOG(LOG_LEVEL_INFO, "🛑 Stopping irrigation:");
+    COM_LOG(LOG_LEVEL_INFO, "   Zone: %d", stoppedZone);
 
     // Turn off zone relay (active LOW - set to HIGH to deactivate)
     if (activeZoneNumber > 0 && activeZoneNumber <= MAX_ZONES) {
         int zoneIndex = activeZoneNumber - 1;
         digitalWrite(zoneRelayPins[zoneIndex], HIGH);
-        COM_LOG(LOG_LEVEL_INFO, "Zone %d relay: OFF (GPIO %d = HIGH)", activeZoneNumber, zoneRelayPins[zoneIndex]);
+        COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d relay: OFF (GPIO %d = HIGH)",
+               activeZoneNumber, zoneRelayPins[zoneIndex]);
     }
 
     // Turn off pump (active LOW - set to HIGH to deactivate)
     digitalWrite(PUMP_RELAY_PIN, HIGH);
-    COM_LOG(LOG_LEVEL_INFO, "Pump: OFF (GPIO %d = HIGH)", PUMP_RELAY_PIN);
+    COM_LOG(LOG_LEVEL_INFO, "   ✅ Pump: OFF (GPIO %d = HIGH)", PUMP_RELAY_PIN);
 
     isIrrigating = false;
     activeZoneNumber = 0;
     irrigationEndTime = 0;
 
-    COM_LOG(LOG_LEVEL_INFO, "Irrigation stopped");
+    COM_LOG(LOG_LEVEL_INFO, "   ✅ Irrigation stopped successfully");
 }
 
 // Check irrigation timer (exactly like versio)
 static void checkIrrigationTimer() {
-    if (isIrrigating && irrigationEndTime > 0 && millis() >= irrigationEndTime) {
-        COM_LOG(LOG_LEVEL_INFO, "Irrigation timer expired - stopping");
-        stopIrrigation();
+    if (isIrrigating && irrigationEndTime > 0) {
+        unsigned long currentTime = millis();
+
+        if (currentTime >= irrigationEndTime) {
+            COM_LOG(LOG_LEVEL_INFO, "⏰ Irrigation timer expired for Zone %d - stopping automatically",
+                   activeZoneNumber);
+            stopIrrigation();
+        } else {
+            // Display remaining time every 5 seconds
+            static unsigned long lastTimerLog = 0;
+            if (currentTime - lastTimerLog >= 5000) {
+                lastTimerLog = currentTime;
+                unsigned long remainingMs = irrigationEndTime - currentTime;
+                unsigned long remainingSeconds = remainingMs / 1000;
+                unsigned long remainingMinutes = remainingSeconds / 60;
+                remainingSeconds = remainingSeconds % 60;
+
+                if (remainingMinutes > 0) {
+                    COM_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone %d | Time remaining: %lu min %lu sec",
+                           activeZoneNumber, remainingMinutes, remainingSeconds);
+                } else {
+                    COM_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone %d | Time remaining: %lu sec",
+                           activeZoneNumber, remainingSeconds);
+                }
+            }
+        }
     }
 }
 

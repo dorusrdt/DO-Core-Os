@@ -25,10 +25,11 @@ create_config_1_zone() {
       "zoneId": "zone_001",
       "physicalZoneNumber": 1,
       "waterPerDay": 5000,
-      "irrigationTime": "08:00",
-      "humidityThreshold": 12,
+      "irrigationTime": "2:4",
+      "humidityThreshold": 70,
       "sensors": [
-        {"sensorId": "s01"}
+        {"sensorId": "s01"},
+        {"sensorId": "s03"}
       ]
     }
   ]

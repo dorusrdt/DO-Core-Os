@@ -17,7 +17,8 @@ const char* ap_ssid = "ESP32_MASTER";
 const char* ap_pass = "12345678";
 
 // Configuration serveur externe
-static const char* serverURL = "http://192.168.1.72:8000";
+// NOTE: Port 3000 pour serveur réel (irrigation-ai-v-beta), port 8000 pour serveur de simulation
+static const char* serverURL = "http://192.168.1.72:3000";
 static const char* deviceId = "ESP32_IRRIGATION_11100454456464674";
 static const char* deviceSecret = "esp32-secure-key-2024";
 
@@ -38,15 +39,27 @@ static const char* deviceSecret = "esp32-secure-key-2024";
 #define MASTER_LOG(level, fmt, ...) \
     kernel_log(level, "[ESP32_master] " fmt, ##__VA_ARGS__)
 
-// Zone Stack Structure (exactly like versio)
+// Irrigation Schedule Structure (NEW - for dynamic schedules from server)
+struct IrrigationSchedule {
+    String time;              // "08:00" format HH:MM
+    int durationMinutes;      // Duration in minutes (1-300)
+    bool daysOfWeek[7];       // [0]=Sunday, [1]=Monday, ..., [6]=Saturday
+    bool isActive;            // Whether this schedule is active
+};
+
+// Zone Stack Structure (exactly like versio + NEW schedule support)
 struct ZoneSlot {
     int id;  // Array index (0-3)
     int physicalZoneNumber;  // Physical relay/zone number from server (1-4)
     bool configured;
     String zoneId;
     int waterPerDay;
-    String irrigationTime;
+    String irrigationTime;   // DEPRECATED: Use irrigationSchedule instead (kept for fallback)
     int humidityThreshold;
+
+    // NEW: Dynamic irrigation schedules support
+    IrrigationSchedule schedules[10];  // Max 10 schedules per zone
+    int scheduleCount;                 // Number of active schedules (0-10)
 };
 
 // Sensor Stack Structure (exactly like versio)
@@ -119,6 +132,7 @@ static void checkIrrigationTimer();
 static String generateHMAC(String data);
 static String getTimestamp();
 static void updateSlaveSensorData(uint8_t slaveId, String data);
+static void parseIrrigationSchedules(ZoneSlot* zoneSlot, JsonObject zone);
 
 // Initialize BME280
 static bool init_bme280() {
@@ -373,7 +387,126 @@ static void pollConfiguration() {
     http.end();
 }
 
-// Parse configuration (exactly like versio - preserving all logic)
+// Parse irrigation schedules from zone configuration (NEW - Phase 1)
+static void parseIrrigationSchedules(ZoneSlot* zoneSlot, JsonObject zone) {
+    // Clear existing schedules
+    zoneSlot->scheduleCount = 0;
+    for (int s = 0; s < 10; s++) {
+        zoneSlot->schedules[s].time = "";
+        zoneSlot->schedules[s].durationMinutes = 0;
+        zoneSlot->schedules[s].isActive = false;
+        for (int d = 0; d < 7; d++) {
+            zoneSlot->schedules[s].daysOfWeek[d] = false;
+        }
+    }
+
+    // Priority 1: Parse irrigationSchedule (NEW format from real server)
+    if (zone.containsKey("irrigationSchedule")) {
+        JsonArray schedulesArray = zone["irrigationSchedule"];
+        int scheduleCount = schedulesArray.size();
+
+        MASTER_LOG(LOG_LEVEL_INFO, "Parsing %d irrigation schedules for zone %s",
+                  scheduleCount, zoneSlot->zoneId.c_str());
+
+        int parsedCount = 0;
+        for (int i = 0; i < scheduleCount && parsedCount < 10; i++) {
+            JsonObject scheduleObj = schedulesArray[i];
+
+            // Skip inactive schedules
+            if (scheduleObj.containsKey("isActive") && scheduleObj["isActive"] == false) {
+                continue;
+            }
+
+            IrrigationSchedule& schedule = zoneSlot->schedules[parsedCount];
+
+            // Parse time (HH:MM format)
+            if (scheduleObj.containsKey("time")) {
+                schedule.time = scheduleObj["time"].as<String>();
+            } else {
+                MASTER_LOG(LOG_LEVEL_WARN, "Schedule %d missing 'time', skipping", i + 1);
+                continue;
+            }
+
+            // Parse duration (minutes, 1-300)
+            if (scheduleObj.containsKey("duration")) {
+                int duration = scheduleObj["duration"];
+                schedule.durationMinutes = constrain(duration, 1, 300);
+            } else {
+                MASTER_LOG(LOG_LEVEL_WARN, "Schedule %d missing 'duration', using default 15 min", i + 1);
+                schedule.durationMinutes = 15;
+            }
+
+            // Parse daysOfWeek array (0=Sunday, 1=Monday, ..., 6=Saturday)
+            for (int d = 0; d < 7; d++) {
+                schedule.daysOfWeek[d] = false;
+            }
+
+            if (scheduleObj.containsKey("daysOfWeek")) {
+                JsonArray daysArray = scheduleObj["daysOfWeek"];
+                for (JsonVariant day : daysArray) {
+                    int dayNum = day.as<int>();
+                    if (dayNum >= 0 && dayNum < 7) {
+                        schedule.daysOfWeek[dayNum] = true;
+                    }
+                }
+            } else {
+                // Default: all days if not specified
+                for (int d = 0; d < 7; d++) {
+                    schedule.daysOfWeek[d] = true;
+                }
+            }
+
+            schedule.isActive = true;
+            parsedCount++;
+
+            // Log schedule details
+            String daysStr = "";
+            for (int d = 0; d < 7; d++) {
+                if (schedule.daysOfWeek[d]) {
+                    if (daysStr.length() > 0) daysStr += ",";
+                    const char* dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+                    daysStr += dayNames[d];
+                }
+            }
+            MASTER_LOG(LOG_LEVEL_INFO, "  Schedule %d: %s, %d min, days: [%s]",
+                      parsedCount, schedule.time.c_str(), schedule.durationMinutes, daysStr.c_str());
+        }
+
+        zoneSlot->scheduleCount = parsedCount;
+        MASTER_LOG(LOG_LEVEL_INFO, "Loaded %d/%d schedules for zone %s",
+                  parsedCount, scheduleCount, zoneSlot->zoneId.c_str());
+
+    }
+    // Priority 2: Fallback to irrigationTime (DEPRECATED - for compatibility with simulation server)
+    else if (zone.containsKey("irrigationTime")) {
+        String irrigationTime = zone["irrigationTime"].as<String>();
+        int waterPerDay = zoneSlot->waterPerDay;
+        int durationSeconds = waterPerDay / 10;  // Legacy calculation
+        int durationMinutes = (durationSeconds + 30) / 60;  // Round to nearest minute
+        if (durationMinutes < 1) durationMinutes = 1;
+
+        // Create a single default schedule (all days)
+        IrrigationSchedule& schedule = zoneSlot->schedules[0];
+        schedule.time = irrigationTime;
+        schedule.durationMinutes = durationMinutes;
+        schedule.isActive = true;
+        for (int d = 0; d < 7; d++) {
+            schedule.daysOfWeek[d] = true;  // All days
+        }
+
+        zoneSlot->scheduleCount = 1;
+        zoneSlot->irrigationTime = irrigationTime;  // Keep for backward compatibility
+
+        MASTER_LOG(LOG_LEVEL_INFO, "Using legacy irrigationTime: %s, %d min (all days)",
+                  irrigationTime.c_str(), durationMinutes);
+    } else {
+        // No schedule provided
+        zoneSlot->scheduleCount = 0;
+        MASTER_LOG(LOG_LEVEL_WARN, "No irrigation schedule found for zone %s", zoneSlot->zoneId.c_str());
+    }
+}
+
+// Parse configuration (exactly like versio - preserving all logic + NEW schedule support)
 static void parseConfiguration(String jsonResponse) {
     // Buffer optimisé : config peut contenir jusqu'à 4 zones avec leurs capteurs
     // Estimation : ~2-3 KB max pour une config complète
@@ -423,10 +556,20 @@ static void parseConfiguration(String jsonResponse) {
             // If zone exists, update config AND reassign sensors (exactly like versio)
             if (existingSlot) {
                 existingSlot->waterPerDay = zone["waterPerDay"];
-                existingSlot->irrigationTime = zone["irrigationTime"].as<String>();
+                // Keep irrigationTime for backward compatibility (DEPRECATED)
+                if (zone.containsKey("irrigationTime")) {
+                    existingSlot->irrigationTime = zone["irrigationTime"].as<String>();
+                }
                 existingSlot->humidityThreshold = zone["humidityThreshold"];
-                MASTER_LOG(LOG_LEVEL_INFO, "Water: %dml/day, Time: %s, Threshold: %d%% (updated)",
-                         existingSlot->waterPerDay, existingSlot->irrigationTime.c_str(), existingSlot->humidityThreshold);
+
+                // Parse irrigation schedules (NEW - Phase 1)
+                parseIrrigationSchedules(existingSlot, zone);
+
+                MASTER_LOG(LOG_LEVEL_INFO, "Water: %dml/day, Threshold: %d%% (updated)",
+                         existingSlot->waterPerDay, existingSlot->humidityThreshold);
+                if (existingSlot->scheduleCount > 0) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "Schedules: %d active", existingSlot->scheduleCount);
+                }
 
                 // IMPORTANT: Clear old sensors for this zone and reassign new ones (exactly like versio)
                 MASTER_LOG(LOG_LEVEL_DEBUG, "Updating sensors for existing zone %s", zoneId.c_str());
@@ -463,12 +606,21 @@ static void parseConfiguration(String jsonResponse) {
                 String sensorList = "";
                 String sensorDataList = "";
                 int sensorCount = 0;
+                int assignedSensorCount = 0;
 
                 // Utiliser directement slaveSensorData (déjà parsé)
                 bool hasSensorData = (slaveSensorDataLastUpdate > 0 &&
                                      (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
                 DynamicJsonDocument& sensorDocUpdate = slaveSensorData; // Référence directe
 
+                // First, count how many sensors are actually assigned to this zone
+                for (int s = 0; s < MAX_SENSORS; s++) {
+                    if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zoneId) {
+                        assignedSensorCount++;
+                    }
+                }
+
+                // Then build the lists with all assigned sensors
                 for (int s = 0; s < MAX_SENSORS; s++) {
                     if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zoneId) {
                         if (sensorCount > 0) {
@@ -492,12 +644,20 @@ static void parseConfiguration(String jsonResponse) {
                     }
                 }
 
-                if (hasSensorData) {
-                    MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s updated with %d sensors: [%s] | Values: [%s]",
-                             existingSlot->id, zoneId.c_str(), sensors.size(), sensorList.c_str(), sensorDataList.c_str());
+                // Log with detailed information (split into multiple lines to avoid truncation)
+                if (hasSensorData && sensorCount > 0) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s updated with %d sensors",
+                             existingSlot->id, zoneId.c_str(), assignedSensorCount);
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [%s]", sensorDataList.c_str());
+                } else if (sensorCount > 0) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s updated with %d sensors",
+                             existingSlot->id, zoneId.c_str(), assignedSensorCount);
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [N/A - no recent data]");
                 } else {
-                    MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s updated with %d sensors: [%s]",
-                             existingSlot->id, zoneId.c_str(), sensors.size(), sensorList.c_str());
+                    MASTER_LOG(LOG_LEVEL_WARN, "Zone %d: %s updated but NO sensors assigned!",
+                             existingSlot->id, zoneId.c_str());
                 }
 
                 continue; // Skip new zone creation
@@ -526,12 +686,21 @@ static void parseConfiguration(String jsonResponse) {
             slot->zoneId = zoneId;
             slot->physicalZoneNumber = physicalZoneNumber;
             slot->waterPerDay = zone["waterPerDay"];
-            slot->irrigationTime = zone["irrigationTime"].as<String>();
+            // Keep irrigationTime for backward compatibility (DEPRECATED)
+            if (zone.containsKey("irrigationTime")) {
+                slot->irrigationTime = zone["irrigationTime"].as<String>();
+            }
             slot->humidityThreshold = zone["humidityThreshold"];
 
+            // Parse irrigation schedules (NEW - Phase 1)
+            parseIrrigationSchedules(slot, zone);
+
             MASTER_LOG(LOG_LEVEL_INFO, "Zone %d (Physical #%d): %s", slot->id, physicalZoneNumber, zoneId.c_str());
-            MASTER_LOG(LOG_LEVEL_INFO, "Water: %dml/day, Time: %s, Threshold: %d%%",
-                     slot->waterPerDay, slot->irrigationTime.c_str(), slot->humidityThreshold);
+            MASTER_LOG(LOG_LEVEL_INFO, "Water: %dml/day, Threshold: %d%%",
+                     slot->waterPerDay, slot->humidityThreshold);
+            if (slot->scheduleCount > 0) {
+                MASTER_LOG(LOG_LEVEL_INFO, "Schedules: %d active", slot->scheduleCount);
+            }
 
             // Assign sensors to this zone (exactly like versio)
             JsonArray sensors = zone["sensors"];
@@ -575,12 +744,21 @@ static void parseConfiguration(String jsonResponse) {
             String sensorList = "";
             String sensorDataList = "";
             int sensorCount = 0;
+            int assignedSensorCount = 0;
 
             // Utiliser directement slaveSensorData (déjà parsé)
             bool hasSensorData = (slaveSensorDataLastUpdate > 0 &&
                                  (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
             DynamicJsonDocument& sensorDoc = slaveSensorData; // Référence directe
 
+            // First, count how many sensors are actually assigned to this zone
+            for (int s = 0; s < MAX_SENSORS; s++) {
+                if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zoneId) {
+                    assignedSensorCount++;
+                }
+            }
+
+            // Then build the lists with all assigned sensors
             for (int s = 0; s < MAX_SENSORS; s++) {
                 if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zoneId) {
                     if (sensorCount > 0) {
@@ -604,12 +782,20 @@ static void parseConfiguration(String jsonResponse) {
                 }
             }
 
-            if (hasSensorData) {
-                MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s configured with %d sensors: [%s] | Values: [%s]",
-                         slot->id, zoneId.c_str(), sensors.size(), sensorList.c_str(), sensorDataList.c_str());
+            // Log with detailed information (split into multiple lines to avoid truncation)
+            if (hasSensorData && sensorCount > 0) {
+                MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s configured with %d sensors",
+                         slot->id, zoneId.c_str(), assignedSensorCount);
+                MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
+                MASTER_LOG(LOG_LEVEL_INFO, "  Values: [%s]", sensorDataList.c_str());
+            } else if (sensorCount > 0) {
+                MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s configured with %d sensors",
+                         slot->id, zoneId.c_str(), assignedSensorCount);
+                MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
+                MASTER_LOG(LOG_LEVEL_INFO, "  Values: [N/A - no recent data]");
             } else {
-                MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s configured with %d sensors: [%s]",
-                         slot->id, zoneId.c_str(), sensors.size(), sensorList.c_str());
+                MASTER_LOG(LOG_LEVEL_WARN, "Zone %d: %s configured but NO sensors assigned!",
+                         slot->id, zoneId.c_str());
             }
         }
 
@@ -853,7 +1039,7 @@ static void sendSensorData() {
     http.end();
 }
 
-// Check irrigation schedule (exactly like versio)
+// Check irrigation schedule (UPDATED - Phase 1: Support multiple schedules with daysOfWeek)
 static void checkIrrigationSchedule() {
     if (!deviceRegistered || assignedZoneCount == 0) return;
 
@@ -863,18 +1049,140 @@ static void checkIrrigationSchedule() {
         return;
     }
 
+    int currentDayOfWeek = timeinfo.tm_wday;  // 0=Sunday, 1=Monday, ..., 6=Saturday
     char currentTime[6];
     strftime(currentTime, sizeof(currentTime), "%H:%M", &timeinfo);
+    String currentTimeStr = String(currentTime);
 
+    // Check all zones
     for (int i = 0; i < MAX_ZONES; i++) {
-        if (ZONE_STACK[i].configured && ZONE_STACK[i].irrigationTime.equals(String(currentTime))) {
-            MASTER_LOG(LOG_LEVEL_INFO, "Scheduled irrigation for zone %d", ZONE_STACK[i].id);
-            executeIrrigation(ZONE_STACK[i].zoneId, ZONE_STACK[i].waterPerDay / 10); // Convert ml to seconds
+        if (!ZONE_STACK[i].configured) continue;
+
+        ZoneSlot& zone = ZONE_STACK[i];
+
+        // Priority 1: Check new irrigationSchedule (multiple schedules)
+        if (zone.scheduleCount > 0) {
+            for (int s = 0; s < zone.scheduleCount; s++) {
+                IrrigationSchedule& schedule = zone.schedules[s];
+
+                if (!schedule.isActive) continue;
+
+                // Check if today is in the schedule
+                if (!schedule.daysOfWeek[currentDayOfWeek]) {
+                    continue;  // Not scheduled for today
+                }
+
+                // Check if it's the right time
+                if (schedule.time.equals(currentTimeStr)) {
+                    int durationSeconds = schedule.durationMinutes * 60;
+
+                    // Build days string for log
+                    String daysStr = "";
+                    for (int d = 0; d < 7; d++) {
+                        if (schedule.daysOfWeek[d]) {
+                            if (daysStr.length() > 0) daysStr += ",";
+                            const char* dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+                            daysStr += dayNames[d];
+                        }
+                    }
+
+                    // Check moisture level before executing scheduled irrigation
+                    float avgMoisture = 50.0; // Default
+                    int sensorCount = 0;
+                    float totalMoisture = 0;
+                    bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
+                                         (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                    DynamicJsonDocument& sensorDoc = slaveSensorData;
+
+                    // Calculate average moisture for this zone
+                    for (int s = 0; s < MAX_SENSORS; s++) {
+                        if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zone.zoneId) {
+                            float moisture = 50.0; // Default
+                            if (hasRecentData && sensorDoc.containsKey(SENSOR_STACK[s].id)) {
+                                moisture = sensorDoc[SENSOR_STACK[s].id];
+                            }
+                            totalMoisture += moisture;
+                            sensorCount++;
+                        }
+                    }
+
+                    if (sensorCount > 0) {
+                        avgMoisture = totalMoisture / sensorCount;
+                    }
+
+                    // Check if moisture is above threshold (irrigation not needed)
+                    if (avgMoisture >= zone.humidityThreshold) {
+                        MASTER_LOG(LOG_LEVEL_INFO, "⏰ Scheduled irrigation time reached for zone %d (%s): %s",
+                                  zone.id, zone.zoneId.c_str(), schedule.time.c_str());
+                        MASTER_LOG(LOG_LEVEL_INFO, "   ⏭️  Irrigation IGNORED: Moisture %.1f%% >= %d%% (threshold) - No irrigation needed",
+                                  avgMoisture, zone.humidityThreshold);
+                    } else {
+                        // Moisture is below threshold - execute irrigation
+                        MASTER_LOG(LOG_LEVEL_INFO, "📅 Scheduled irrigation for zone %d (%s): %s, %d min, days: [%s]",
+                                  zone.id, zone.zoneId.c_str(), schedule.time.c_str(),
+                                  schedule.durationMinutes, daysStr.c_str());
+                        MASTER_LOG(LOG_LEVEL_INFO, "   ✅ Moisture %.1f%% < %d%% (threshold) - Irrigation will start",
+                                  avgMoisture, zone.humidityThreshold);
+
+                        executeIrrigation(zone.zoneId, durationSeconds);
+                    }
+                }
+            }
+        }
+        // Priority 2: Fallback to legacy irrigationTime (DEPRECATED)
+        else if (zone.irrigationTime.length() > 0) {
+            if (zone.irrigationTime.equals(currentTimeStr)) {
+                int durationSeconds = zone.waterPerDay / 10;  // Legacy calculation
+
+                // Check moisture level before executing scheduled irrigation
+                float avgMoisture = 50.0; // Default
+                int sensorCount = 0;
+                float totalMoisture = 0;
+                bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
+                                     (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                DynamicJsonDocument& sensorDoc = slaveSensorData;
+
+                // Calculate average moisture for this zone
+                for (int s = 0; s < MAX_SENSORS; s++) {
+                    if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == zone.zoneId) {
+                        float moisture = 50.0; // Default
+                        if (hasRecentData && sensorDoc.containsKey(SENSOR_STACK[s].id)) {
+                            moisture = sensorDoc[SENSOR_STACK[s].id];
+                        }
+                        totalMoisture += moisture;
+                        sensorCount++;
+                    }
+                }
+
+                if (sensorCount > 0) {
+                    avgMoisture = totalMoisture / sensorCount;
+                }
+
+                // Check if moisture is above threshold (irrigation not needed)
+                if (avgMoisture >= zone.humidityThreshold) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "⏰ Scheduled irrigation time reached for zone %d (%s): %s (legacy format)",
+                              zone.id, zone.zoneId.c_str(), zone.irrigationTime.c_str());
+                    MASTER_LOG(LOG_LEVEL_INFO, "   ⏭️  Irrigation IGNORED: Moisture %.1f%% >= %d%% (threshold) - No irrigation needed",
+                              avgMoisture, zone.humidityThreshold);
+                } else {
+                    // Moisture is below threshold - execute irrigation
+                    MASTER_LOG(LOG_LEVEL_INFO, "📅 Scheduled irrigation for zone %d (%s): %s (legacy format)",
+                              zone.id, zone.zoneId.c_str(), zone.irrigationTime.c_str());
+                    MASTER_LOG(LOG_LEVEL_INFO, "   ✅ Moisture %.1f%% < %d%% (threshold) - Irrigation will start",
+                              avgMoisture, zone.humidityThreshold);
+
+                    executeIrrigation(zone.zoneId, durationSeconds);
+                }
+            }
         }
     }
 }
 
 // Check moisture thresholds (exactly like versio)
+// Static variables to track last log time and state to avoid log spam
+static unsigned long lastMoistureLog[MAX_ZONES] = {0};
+static bool lastMoistureLowState[MAX_ZONES] = {false};
+
 static void checkMoistureThresholds() {
     for (int i = 0; i < MAX_ZONES; i++) {
         if (!ZONE_STACK[i].configured) continue;
@@ -906,32 +1214,93 @@ static void checkMoistureThresholds() {
         if (sensorCount > 0) {
             float avgMoisture = totalMoisture / sensorCount;
 
-            if (avgMoisture < ZONE_STACK[i].humidityThreshold) {
-                MASTER_LOG(LOG_LEVEL_WARN, "Zone %d moisture critical: %.1f%% < %d%%",
-                          ZONE_STACK[i].id, avgMoisture, ZONE_STACK[i].humidityThreshold);
+            // Emergency irrigation threshold: fixed at 10% (independent of zone threshold)
+            const float EMERGENCY_THRESHOLD = 10.0;
+
+            // Check for emergency irrigation (critical moisture level)
+            if (avgMoisture < EMERGENCY_THRESHOLD) {
+                MASTER_LOG(LOG_LEVEL_WARN, "🚨 Zone %d EMERGENCY: %.1f%% < %.1f%% (emergency threshold)",
+                          ZONE_STACK[i].id, avgMoisture, EMERGENCY_THRESHOLD);
+                MASTER_LOG(LOG_LEVEL_INFO, "Emergency irrigation triggered (independent of scheduled time)");
 
                 // Emergency irrigation - 10 seconds
                 executeIrrigation(ZONE_STACK[i].zoneId, 10); // 10 seconds emergency irrigation
+
+                // Reset log state
+                lastMoistureLowState[i] = false;
+            }
+            // Check for scheduled irrigation threshold (only log if state changed or every 5 minutes)
+            else if (avgMoisture < ZONE_STACK[i].humidityThreshold) {
+                bool currentLowState = true;
+                unsigned long currentTime = millis();
+
+                // Log only if state changed (was OK, now low) or every 5 minutes
+                if (!lastMoistureLowState[i] || (currentTime - lastMoistureLog[i] >= 300000)) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "Zone %d moisture below scheduled threshold: %.1f%% < %d%% (will irrigate at %s)",
+                              ZONE_STACK[i].id, avgMoisture, ZONE_STACK[i].humidityThreshold,
+                              ZONE_STACK[i].irrigationTime.c_str());
+                    lastMoistureLog[i] = currentTime;
+                    lastMoistureLowState[i] = currentLowState;
+                }
+                // Note: Scheduled irrigation is handled by checkIrrigationSchedule() based on time
+            } else {
+                // Moisture is OK - reset state if it was low before
+                if (lastMoistureLowState[i]) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "Zone %d moisture OK: %.1f%% >= %d%% (threshold)",
+                              ZONE_STACK[i].id, avgMoisture, ZONE_STACK[i].humidityThreshold);
+                    lastMoistureLowState[i] = false;
+                }
             }
         }
     }
 }
 
 // Check irrigation timer (exactly like versio)
+static unsigned long lastRemainingTimeLog = 0;  // Move static outside to persist across calls
+
 static void checkIrrigationTimer() {
-    if (isIrrigating && activeIrrigationTimer > 0 && millis() >= activeIrrigationTimer) {
-        // Stop irrigation
-        isIrrigating = false;
-        activeIrrigationTimer = 0;
-        String zoneId = activeZoneId;
-        activeZoneId = "";
+    if (isIrrigating && activeIrrigationTimer > 0) {
+        unsigned long currentTime = millis();
 
-        MASTER_LOG(LOG_LEVEL_INFO, "Irrigation completed for zone %s", zoneId.c_str());
+        if (currentTime >= activeIrrigationTimer) {
+            // Stop irrigation
+            isIrrigating = false;
+            activeIrrigationTimer = 0;
+            String zoneId = activeZoneId;
+            activeZoneId = "";
+            lastRemainingTimeLog = 0;  // Reset log timer
 
-        // Send stop command to ESP32_com
-        if (webSocket) {
-            String stopCmd = "{\"action\":\"stop_irrigation\",\"zoneId\":\"" + zoneId + "\"}";
-            webSocket->broadcastTXT(stopCmd);
+            MASTER_LOG(LOG_LEVEL_INFO, "✅ Irrigation completed for zone %s", zoneId.c_str());
+
+            // Send stop command to ESP32_com
+            if (webSocket) {
+                String stopCmd = "{\"action\":\"stop_irrigation\",\"zoneId\":\"" + zoneId + "\"}";
+                webSocket->broadcastTXT(stopCmd);
+            }
+        } else {
+            // Calculate and display remaining time
+            unsigned long remainingMs = activeIrrigationTimer - currentTime;
+            unsigned long remainingSeconds = remainingMs / 1000;
+            unsigned long remainingMinutes = remainingSeconds / 60;
+            remainingSeconds = remainingSeconds % 60;
+
+            // Display remaining time immediately on first call, then every 5 seconds
+            if (lastRemainingTimeLog == 0 || (currentTime - lastRemainingTimeLog >= 5000)) {
+                lastRemainingTimeLog = currentTime;
+
+                if (remainingMinutes > 0) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone: %s | Time remaining: %lu min %lu sec",
+                             activeZoneId.c_str(), remainingMinutes, remainingSeconds);
+                } else {
+                    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone: %s | Time remaining: %lu sec",
+                             activeZoneId.c_str(), remainingSeconds);
+                }
+            }
+        }
+    } else {
+        // Reset log timer when not irrigating
+        if (lastRemainingTimeLog > 0) {
+            lastRemainingTimeLog = 0;
         }
     }
 }
@@ -957,12 +1326,25 @@ static void executeIrrigation(String zoneId, int durationSeconds) {
         return;
     }
 
-    MASTER_LOG(LOG_LEVEL_INFO, "Starting irrigation for zone %s (Physical #%d)", zoneId.c_str(), zoneSlot->physicalZoneNumber);
-    MASTER_LOG(LOG_LEVEL_INFO, "Duration: %ds", durationSeconds);
+    // Calculate time breakdown for display
+    unsigned long minutes = durationSeconds / 60;
+    unsigned long seconds = durationSeconds % 60;
+
+    if (minutes > 0) {
+        MASTER_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation for zone %s (Physical #%d) | Duration: %lu min %lu sec",
+                 zoneId.c_str(), zoneSlot->physicalZoneNumber, minutes, seconds);
+    } else {
+        MASTER_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation for zone %s (Physical #%d) | Duration: %lu sec",
+                 zoneId.c_str(), zoneSlot->physicalZoneNumber, seconds);
+    }
 
     isIrrigating = true;
     activeZoneId = zoneId;
     activeIrrigationTimer = millis() + (durationSeconds * 1000);
+
+    // Display initial remaining time
+    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation started - Zone: %s | Time remaining: %lu min %lu sec",
+             zoneId.c_str(), minutes, seconds);
 
     // Send irrigation command to ESP32_com via WebSocket
     if (webSocket) {
@@ -1023,7 +1405,7 @@ static void ESP32_master_app_start(void) {
     MASTER_LOG(LOG_LEVEL_DEBUG, "Server URL: %s", serverURL);
     MASTER_LOG(LOG_LEVEL_DEBUG, "Device ID: %s", deviceId);
 
-    // Initialize zone stack (exactly like versio)
+    // Initialize zone stack (exactly like versio + NEW schedule support)
     for (int i = 0; i < MAX_ZONES; i++) {
         ZONE_STACK[i].id = i + 1;
         ZONE_STACK[i].configured = false;
@@ -1032,6 +1414,17 @@ static void ESP32_master_app_start(void) {
         ZONE_STACK[i].irrigationTime = "";
         ZONE_STACK[i].humidityThreshold = 0;
         ZONE_STACK[i].physicalZoneNumber = i + 1;
+
+        // Initialize schedules
+        ZONE_STACK[i].scheduleCount = 0;
+        for (int s = 0; s < 10; s++) {
+            ZONE_STACK[i].schedules[s].time = "";
+            ZONE_STACK[i].schedules[s].durationMinutes = 0;
+            ZONE_STACK[i].schedules[s].isActive = false;
+            for (int d = 0; d < 7; d++) {
+                ZONE_STACK[i].schedules[s].daysOfWeek[d] = false;
+            }
+        }
     }
 
     // Initialize sensor stack (exactly like versio)

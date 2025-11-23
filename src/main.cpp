@@ -301,8 +301,20 @@ void wifi_supervision_task(void* parameter) {
                 kernel_log(LOG_LEVEL_INFO, "WiFi CON - IP: %s, RSSI: %d",
                           WiFi.localIP().toString().c_str(), current_rssi);
 
-                // Mettre à jour heartbeat
-                heartbeat_set_state(HEARTBEAT_READY);
+                // Mettre à jour heartbeat : vérifier si des apps sont actives
+                bool has_running_apps = false;
+                for (uint8_t i = 1; i < 255; i++) {
+                    if (app_is_running(i)) {
+                        has_running_apps = true;
+                        break;
+                    }
+                }
+
+                if (has_running_apps) {
+                    heartbeat_set_state(HEARTBEAT_RUNNING);  // Apps actives
+                } else {
+                    heartbeat_set_state(HEARTBEAT_READY);   // Pas d'apps actives
+                }
 
                 // Déclencher une synchronisation immédiate du temps
                 kernel_log(LOG_LEVEL_INFO, "WiFi reconnected - triggering immediate time sync");
@@ -773,7 +785,21 @@ void setup() {
     Serial.println("  wifi_save <ssid> <pwd> - Save WiFi credentials");
     Serial.println();
 
-    heartbeat_set_state(HEARTBEAT_READY);
+    // Mettre à jour le heartbeat : vérifier si des apps sont déjà en cours d'exécution
+    // Si des apps sont actives, le heartbeat sera déjà en HEARTBEAT_RUNNING
+    // Sinon, on met READY
+    bool has_running_apps = false;
+    for (uint8_t i = 1; i < 255; i++) {  // Parcourir tous les IDs possibles
+        if (app_is_running(i)) {
+            has_running_apps = true;
+            break;
+        }
+    }
+
+    if (!has_running_apps) {
+        heartbeat_set_state(HEARTBEAT_READY);
+    }
+    // Si des apps sont en cours, le heartbeat est déjà en HEARTBEAT_RUNNING (défini par app_start)
 
     // Démarrer le shell
     interface_start();

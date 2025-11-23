@@ -1,4 +1,5 @@
 #include "ESP32_sensor.h"
+#include "MoistureSensor.h"
 #include "../../kernel/app/app_manager.h"
 #include "../../kernel/core/log_system_optimized.h"
 #include <WiFi.h>
@@ -23,8 +24,8 @@ static const uint16_t master_port = 81;
 #define MOISTURE_PIN_2  33
 #define MOISTURE_PIN_3  34
 #define MOISTURE_PIN_4  35
-#define MOISTURE_PIN_5  36
-#define MOISTURE_PIN_6  39
+#define MOISTURE_PIN_5  39
+#define MOISTURE_PIN_6  36
 #define MOISTURE_PIN_7  25
 #define MOISTURE_PIN_8  26
 #define MOISTURE_PIN_9  27
@@ -45,24 +46,27 @@ static bool app_running = false;
 static float sensorReadings[MAX_SENSORS];
 static unsigned long lastSensorRead = 0;
 
-// Read all moisture sensors (exactly like versio logic)
+// MoistureSensor instances for each sensor
+// Calibration: V_MIN = 1.50V (humide), V_MAX = 3.15V (sec)
+static MoistureSensor* moistureSensors[MAX_SENSORS] = {nullptr};
+
+// Read all moisture sensors using MoistureSensor class
 static void readAllSensors() {
     for (int i = 0; i < MAX_SENSORS; i++) {
-        // Read analog value (0-4095 for ESP32, typically 0-3.3V)
-        int rawValue = analogRead(moisturePins[i]);
+        if (moistureSensors[i] == nullptr) {
+            SENSOR_LOG(LOG_LEVEL_ERROR, "Sensor %d not initialized!", i + 1);
+            continue;
+        }
 
-        // Convert to percentage (0-100%)
-        // Typical moisture sensors: higher value = more moisture
-        // Adjust calibration based on your sensor characteristics
-        // For now, using simple linear mapping: 0-4095 -> 0-100%
-        // In production, you may need to calibrate: dry=4095 (0%), wet=0 (100%)
-        float moisture = map(rawValue, 0, 4095, 100, 0); // Inverted: lower ADC = more moisture
+        // Read filtered humidity value (met à jour le cache automatiquement)
+        double humidity = moistureSensors[i]->readHumidity();
+        sensorReadings[i] = (float)humidity;
 
-        // Clamp to realistic range
-        sensorReadings[i] = constrain(moisture, 0, 100);
-
-        SENSOR_LOG(LOG_LEVEL_DEBUG, "Sensor %d (pin %d): raw=%d, moisture=%.1f%%",
-                  i + 1, moisturePins[i], rawValue, sensorReadings[i]);
+        // Log avec détails pour debug (utilise les valeurs en cache)
+        double voltage = moistureSensors[i]->getLastVoltage();
+        int raw = moistureSensors[i]->getLastRaw();
+        SENSOR_LOG(LOG_LEVEL_DEBUG, "Sensor %d (pin %d): raw=%d, voltage=%.3fV, humidity=%.1f%%",
+                  i + 1, moisturePins[i], raw, voltage, sensorReadings[i]);
     }
 }
 
@@ -139,8 +143,18 @@ static void ESP32_sensor_app_start(void) {
     analogSetAttenuation(ADC_11db); // 0-3.3V range
 
     SENSOR_LOG(LOG_LEVEL_INFO, "Initialized %d moisture sensor pins", MAX_SENSORS);
+
+    // Create MoistureSensor instances with calibration
+    // V_MIN = 1.50V (sol très humide), V_MAX = 3.15V (sol très sec)
     for (int i = 0; i < MAX_SENSORS; i++) {
-        SENSOR_LOG(LOG_LEVEL_DEBUG, "  Sensor %d: GPIO %d", i + 1, moisturePins[i]);
+        moistureSensors[i] = new MoistureSensor(moisturePins[i], 1.50, 3.15);
+        if (moistureSensors[i]) {
+            moistureSensors[i]->begin();
+            SENSOR_LOG(LOG_LEVEL_DEBUG, "  Sensor %d: GPIO %d (calibrated: 1.50V-3.15V)",
+                      i + 1, moisturePins[i]);
+        } else {
+            SENSOR_LOG(LOG_LEVEL_ERROR, "Failed to create MoistureSensor %d", i + 1);
+        }
     }
 
     // Connexion au réseau AP du Master
@@ -174,10 +188,13 @@ static void ESP32_sensor_app_start(void) {
 
     SENSOR_LOG(LOG_LEVEL_INFO, "WebSocket client started, connecting to %s:%d", master_ip, master_port);
 
-    // Initialize sensor readings
+    // Initialize sensor readings (will be updated on first read)
     for (int i = 0; i < MAX_SENSORS; i++) {
         sensorReadings[i] = 50.0; // Default value
     }
+
+    // Perform initial sensor read to populate cache
+    readAllSensors();
 
     app_running = true;
 }
@@ -189,6 +206,14 @@ static void ESP32_sensor_app_stop(void) {
     }
 
     SENSOR_LOG(LOG_LEVEL_INFO, "Stopping ESP32 Sensor...");
+
+    // Cleanup MoistureSensor instances
+    for (int i = 0; i < MAX_SENSORS; i++) {
+        if (moistureSensors[i]) {
+            delete moistureSensors[i];
+            moistureSensors[i] = nullptr;
+        }
+    }
 
     if (webSocket) {
         webSocket->disconnect();
