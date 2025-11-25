@@ -31,7 +31,7 @@ static const char* deviceSecret = "esp32-secure-key-2024";
 #define MAX_SENSORS 12
 #define SENSORS_PER_ZONE 10
 
-// I2C Configuration
+// I2C Configuration - Shared bus with RTC (both use 21/22)
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 #define BME280_I2C_ADDR 0x76
@@ -73,6 +73,7 @@ struct SensorSlot {
 static WebSocketsServer* webSocket = nullptr;
 static bool app_running = false;
 
+// BME280 sensor - shared I2C bus with RTC
 static Adafruit_BME280 bmeSensor;
 static bool bme_ready = false;
 static bool bme_simulated = false;
@@ -134,71 +135,6 @@ static String getTimestamp();
 static void updateSlaveSensorData(uint8_t slaveId, String data);
 static void parseIrrigationSchedules(ZoneSlot* zoneSlot, JsonObject zone);
 
-// Initialize BME280
-static bool init_bme280() {
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-    MASTER_LOG(LOG_LEVEL_INFO, "Initializing BME280 on SDA=%d SCL=%d addr=0x%02X",
-               I2C_SDA_PIN, I2C_SCL_PIN, BME280_I2C_ADDR);
-
-    if (!bmeSensor.begin(BME280_I2C_ADDR)) {
-        MASTER_LOG(LOG_LEVEL_WARN, "BME280 not detected. Will simulate values.");
-        bme_simulated = true;
-        return false;
-    }
-
-    bmeSensor.setSampling(
-        Adafruit_BME280::MODE_NORMAL,
-        Adafruit_BME280::SAMPLING_X2,   // temperature
-        Adafruit_BME280::SAMPLING_X16,  // pressure
-        Adafruit_BME280::SAMPLING_X1,   // humidity
-        Adafruit_BME280::FILTER_X4,
-        Adafruit_BME280::STANDBY_MS_500
-    );
-
-    MASTER_LOG(LOG_LEVEL_INFO, "BME280 ready");
-    bme_simulated = false;
-    return true;
-}
-
-// Refresh BME280 or simulate
-static void refresh_bme280() {
-    const unsigned long now = millis();
-    if ((now - bme_data.last_sample_ms) < 5000) {
-        return;
-    }
-
-    if (bme_ready && !bme_simulated) {
-        bme_data.temperature_c = bmeSensor.readTemperature();
-        bme_data.humidity_pct = bmeSensor.readHumidity();
-        bme_data.pressure_hpa = bmeSensor.readPressure() / 100.0F;
-    } else {
-        simulate_bme280();
-    }
-
-    bme_data.last_sample_ms = now;
-
-    MASTER_LOG(LOG_LEVEL_DEBUG,
-               "BME280 sample T=%.2f°C H=%.2f%% P=%.2fhPa %s",
-               bme_data.temperature_c,
-               bme_data.humidity_pct,
-               bme_data.pressure_hpa,
-               bme_simulated ? "(simulated)" : "");
-}
-
-// Simulate BME280 values (exactly like versio logic)
-static void simulate_bme280() {
-    float tempVariation = (random(-100, 101) / 100.0); // ±1°C
-    float humidityVariation = (random(-250, 251) / 100.0); // ±2.5%
-    float pressureVariation = (random(-500, 501) / 100.0); // ±5 hPa
-
-    globalTemperature = constrain(globalTemperature + tempVariation, 15, 40);
-    globalHumidity = constrain(globalHumidity + humidityVariation, 30, 90);
-    globalPressure = constrain(globalPressure + pressureVariation, 990, 1030);
-
-    bme_data.temperature_c = globalTemperature;
-    bme_data.humidity_pct = globalHumidity;
-    bme_data.pressure_hpa = globalPressure;
-}
 
 // Update sensor data from ESP32_sensor slave
 // IMPORTANT: Parse directement le JSON reçu et stocke-le dans slaveSensorData
@@ -224,6 +160,107 @@ static void updateSlaveSensorData(uint8_t slaveId, String data) {
             MASTER_LOG(LOG_LEVEL_DEBUG, "  %s = %.1f%%", sensorId.c_str(), value);
         }
     }
+}
+
+// Initialize BME280 - shared I2C bus with RTC
+static bool init_bme280() {
+    // Note: Wire is already initialized by RTC manager, just configure BME280
+    MASTER_LOG(LOG_LEVEL_INFO, "Initializing BME280 on shared I2C bus SDA=%d SCL=%d addr=0x%02X",
+               I2C_SDA_PIN, I2C_SCL_PIN, BME280_I2C_ADDR);
+
+    delay(100); // Allow sensor to stabilize
+
+    if (!bmeSensor.begin(BME280_I2C_ADDR)) {
+        MASTER_LOG(LOG_LEVEL_WARN, "BME280 not found on shared I2C bus, will use simulated data");
+        bme_simulated = true;
+        bme_data.temperature_c = globalTemperature;
+        bme_data.humidity_pct = globalHumidity;
+        bme_data.pressure_hpa = globalPressure;
+        bme_data.last_sample_ms = millis();
+        return false;
+    }
+
+    // Configure sensor sampling
+    bmeSensor.setSampling(
+        Adafruit_BME280::MODE_NORMAL,
+        Adafruit_BME280::SAMPLING_X2,   // temperature
+        Adafruit_BME280::SAMPLING_X16,  // pressure
+        Adafruit_BME280::SAMPLING_X1,   // humidity
+        Adafruit_BME280::FILTER_X4,
+        Adafruit_BME280::STANDBY_MS_500
+    );
+
+    MASTER_LOG(LOG_LEVEL_INFO, "BME280 ready on shared I2C bus");
+    bme_simulated = false;
+    bme_ready = true;
+
+    // Take initial reading
+    bme_data.temperature_c = bmeSensor.readTemperature();
+    bme_data.pressure_hpa = bmeSensor.readPressure() / 100.0F;
+    bme_data.humidity_pct = bmeSensor.readHumidity();
+    bme_data.last_sample_ms = millis();
+
+    MASTER_LOG(LOG_LEVEL_INFO, "BME280 initial readings - T=%.2f°C H=%.2f%% P=%.2fhPa",
+               bme_data.temperature_c, bme_data.humidity_pct, bme_data.pressure_hpa);
+
+    return true;
+}
+
+// Refresh BME280 data with detailed logging
+static void refresh_bme280() {
+    const unsigned long now = millis();
+    if ((now - bme_data.last_sample_ms) < 5000) {
+        return;
+    }
+
+    if (bme_ready && !bme_simulated) {
+        // Read sensor data
+        float temp = bmeSensor.readTemperature();
+        float pressure = bmeSensor.readPressure() / 100.0F;
+        float humidity = bmeSensor.readHumidity();
+
+        // Update data structure
+        bme_data.temperature_c = temp;
+        bme_data.pressure_hpa = pressure;
+        bme_data.humidity_pct = humidity;
+
+        // Detailed logging for each acquisition
+        MASTER_LOG(LOG_LEVEL_INFO, "🌡️  BME280 Data Acquisition - Temperature: %.2f°C | Humidity: %.2f%% | Pressure: %.2fhPa",
+                   temp, humidity, pressure);
+
+        // Check for unusual values
+        if (temp < 0 || temp > 50) {
+            MASTER_LOG(LOG_LEVEL_WARN, "Unusual temperature reading: %.2f°C", temp);
+        }
+        if (humidity < 0 || humidity > 100) {
+            MASTER_LOG(LOG_LEVEL_WARN, "Unusual humidity reading: %.2f%%", humidity);
+        }
+        if (pressure < 900 || pressure > 1100) {
+            MASTER_LOG(LOG_LEVEL_WARN, "Unusual pressure reading: %.2fhPa", pressure);
+        }
+    } else {
+        // Simulate readings
+        simulate_bme280();
+        MASTER_LOG(LOG_LEVEL_INFO, "🔄 BME280 Simulated Data - Temperature: %.2f°C | Humidity: %.2f%% | Pressure: %.2fhPa",
+                   bme_data.temperature_c, bme_data.humidity_pct, bme_data.pressure_hpa);
+    }
+
+    bme_data.last_sample_ms = now;
+}
+
+// Simulate BME280 values (exactly like versio logic)
+static void simulate_bme280() {
+    float tempVariation = (random(-100, 101) / 100.0); // ±1°C
+    float humidityVariation = (random(-250, 251) / 100.0); // ±2.5%
+    float pressureVariation = (random(-500, 501) / 100.0); // ±5 hPa
+
+    globalTemperature = constrain(globalTemperature + tempVariation, 15, 40);
+    globalHumidity = constrain(globalHumidity + humidityVariation, 30, 90);
+    globalPressure = constrain(globalPressure + pressureVariation, 990, 1030);
+
+    bme_data.temperature_c = globalTemperature;
+    bme_data.humidity_pct = globalHumidity;
+    bme_data.pressure_hpa = globalPressure;
 }
 
 // Generate HMAC signature (exactly like versio - simplified for now)
@@ -905,17 +942,23 @@ static void sendSensorData() {
         return;
     }
 
-    // Global environmental data (exactly like versio)
+    // Global environmental data from BME280
     JsonObject globalData = doc.createNestedObject("globalData");
     if (!globalData.isNull()) {
         if (bme_ready || bme_simulated) {
             globalData["temperature"] = bme_data.temperature_c;
             globalData["humidity"] = bme_data.humidity_pct;
             globalData["pressure"] = bme_data.pressure_hpa;
+
+            MASTER_LOG(LOG_LEVEL_DEBUG, "Sending BME280 data to server - T=%.2f°C H=%.2f%% P=%.2fhPa",
+                       bme_data.temperature_c, bme_data.humidity_pct, bme_data.pressure_hpa);
         } else {
+            // Fallback to simulated values
             globalData["temperature"] = globalTemperature;
             globalData["humidity"] = globalHumidity;
             globalData["pressure"] = globalPressure;
+
+            MASTER_LOG(LOG_LEVEL_WARN, "Using fallback environmental data (BME280 not ready)");
         }
         globalData["batteryLevel"] = 85.0 + random(-10, 16);
         globalData["signalStrength"] = WiFi.RSSI();
@@ -1447,7 +1490,7 @@ static void ESP32_master_app_start(void) {
         return;
     }
 
-    // Initialize BME280
+    // Initialize BME280 on shared I2C bus with RTC
     bme_ready = init_bme280();
     if (!bme_ready) {
         // Initialize simulated values
@@ -1518,7 +1561,7 @@ static void ESP32_master_app_loop(void) {
 
     unsigned long currentTime = millis();
 
-    // Refresh BME280 data
+    // Refresh BME280 data with detailed logging
     refresh_bme280();
 
     // Check irrigation timer

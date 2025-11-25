@@ -6,8 +6,8 @@
 #include "../core/kernel.h"
 
 // Configuration RTC DS3231
-#define RTC_SDA_PIN 25
-#define RTC_SCL_PIN 26
+#define RTC_SDA_PIN 21
+#define RTC_SCL_PIN 22
 #define RTC_I2C_ADDRESS 0x68
 
 

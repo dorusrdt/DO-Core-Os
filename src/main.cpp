@@ -34,6 +34,7 @@
 static bool system_initialized = false;
 volatile bool system_running = false;
 
+
 // Système de stockage persistant des credentials WiFi
 static Preferences wifi_prefs;
 
@@ -391,6 +392,7 @@ void wifi_supervision_task(void* parameter) {
     vTaskDelete(NULL);
 }
 
+
 // Fonction d'affichage du logo système style neofetch
 void display_system_logo() {
     Serial.println();
@@ -552,6 +554,7 @@ void setup() {
         SERIAL_PRINTLN_MINIMAL("OTA Manager OK");
         kernel_log(LOG_LEVEL_INFO, "OTA Manager initialized successfully");
     }
+
 
     // Initialiser le gestionnaire RTC DS3231
     SERIAL_PRINTLN_MINIMAL("RTC init...");
