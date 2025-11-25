@@ -1,23 +1,25 @@
 <div align="center">
 
 ```
-        ██████╗ ██ ██████╗      OS: D'O-CORE v1.0.0 "IRRIG Distro"
-        ██╔══██╗ ██╔═══██╗      Host: ESP32 DevKit
-        ██║  ██║ ██║   ██║      Kernel: ESP-IDF
-        ██║  ██║ ██║   ██║      Shell: DORUS-CORE CLI
+        ██████╗ ██ ██████╗      OS: D'O-CORE v2.0.0 "IRRIG Production"
+        ██╔══██╗ ██╔═══██╗      Kernel: ESP-IDF + FreeRTOS
+        ██║  ██║ ██║   ██║      Architecture: Master-Slave ESP-NOW
+        ██║  ██║ ██║   ██║      Status: PRODUCTION-READY
         ██████╔╝ ╚██████╔╝      Author: D'Orus Tsitera
         ╚═════╝  ╚═════╝        Embedded Systems Engineer
 ```
 
-# 🌊 D'O-Core OS
+# 🌊 D'O-Core OS - Irrigation Control System
 
-**A Lightweight Real-Time Operating System for ESP32**  
-*Designed for Industrial IoT & Smart Irrigation Systems*
+**Production-Grade Distributed Irrigation System for ESP32**
+*Master-Slave Architecture with ESP-NOW Communication & Real-Time Monitoring*
 
 [![Platform](https://img.shields.io/badge/Platform-ESP32-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![Framework](https://img.shields.io/badge/Framework-Arduino-00979D.svg)](https://www.arduino.cc/)
+[![Protocol](https://img.shields.io/badge/Protocol-ESP--NOW-brightgreen.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.0.0-orange.svg)](https://github.com/dorusrdt/DO-Core-Os)
+[![Version](https://img.shields.io/badge/Version-2.0.0-orange.svg)](https://github.com/dorusrdt/DO-Core-Os)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)](#)
 
 </div>
 
@@ -27,14 +29,15 @@
 
 - [Overview](#-overview)
 - [Key Features](#-key-features)
-- [Architecture](#-architecture)
-- [Hardware Requirements](#-hardware-requirements)
-- [Quick Start](#-quick-start)
-- [System Components](#-system-components)
-- [CLI Commands](#-cli-commands)
-- [Application Framework](#-application-framework)
-- [Visual Feedback](#-visual-feedback)
-- [Network Services](#-network-services)
+- [System Architecture](#-system-architecture)
+- [Distributed Architecture](#-distributed-architecture)
+- [Hardware Setup](#-hardware-setup)
+- [Quick Start Guide](#-quick-start-guide)
+- [Master Device Configuration](#-master-device-configuration)
+- [Slave Device Configuration](#-slave-device-configuration)
+- [API Specifications](#-api-specifications)
+- [Testing & Validation](#-testing--validation)
+- [Troubleshooting](#-troubleshooting)
 - [Project Structure](#-project-structure)
 - [Development](#-development)
 - [Contributing](#-contributing)
@@ -45,448 +48,695 @@
 
 ## 🎯 Overview
 
-**D'O-Core OS** is a custom-built, lightweight real-time operating system designed specifically for ESP32 microcontrollers. It provides a robust foundation for building industrial IoT applications with a focus on reliability, modularity, and ease of use.
+**D'O-Core OS v2.0** is a production-grade distributed irrigation control system built on ESP32 microcontrollers. It uses a **Master-Slave architecture** with **ESP-NOW protocol** for ultra-low latency, long-range communication and automatic mesh networking.
 
-The OS features a **microkernel architecture** with a modular application framework, making it ideal for distributed systems like smart irrigation, industrial automation, and sensor networks.
+### 🌟 Production Highlights
 
-### 🌟 Why D'O-Core OS?
+- ✅ **Master-Slave Topology**: 1 Master + N Slaves (tested up to 20 devices)
+- ✅ **ESP-NOW Protocol**: Direct ESP32-to-ESP32 communication (no WiFi required)
+- ✅ **Auto Mesh Network**: Devices auto-discover and self-organize
+- ✅ **Real-Time Monitoring**: Live sensor data and irrigation status
+- ✅ **Web API (FastAPI)**: Full REST interface for automation & dashboards
+- ✅ **Multi-Zone Support**: 4-8 zones per controller (extensible)
+- ✅ **Advanced Scheduling**: Cron-like irrigation schedules with day-of-week
+- ✅ **Sensor Integration**: 12 moisture sensors with calibration
+- ✅ **Hardware Relays**: GPIO-controlled 5V relays for valve actuation
+- ✅ **Error Recovery**: Watchdog & automatic reconnection logic
+- ✅ **Persistent Config**: NVS flash storage for settings & state
 
-- **🔧 Modular Design**: Plug-and-play application architecture
-- **⚡ Real-Time Performance**: FreeRTOS-based task management
-- **🌐 Network-First**: Built-in WiFi, HTTP, NTP, and OTA support
-- **📊 System Monitoring**: Real-time health checks and diagnostics
-- **🛡️ Production-Ready**: Persistent configuration, error handling, and logging
-- **💻 Developer-Friendly**: Interactive CLI with 100+ commands
+### 🏆 Use Cases
+
+- 🌱 **Smart Gardens**: Automated watering with soil moisture feedback
+- 🏡 **Smart Homes**: Integration with home automation systems
+- 🏭 **Industrial Farms**: Large-scale irrigation management
+- 🌾 **Agricultural IoT**: Remote monitoring and control
+- 🔬 **Research**: Sensor networks and data collection
 
 ---
 
 ## ✨ Key Features
 
-### 🔹 Core Kernel
+### 🔹 Master Device
 
-- **Task Manager**: Priority-based scheduling with FreeRTOS integration
-- **Memory Manager**: Dynamic allocation tracking and leak detection
-- **Log System**: Multi-level logging with circular buffer (1000+ messages)
-- **System Monitor**: CPU, memory, and health monitoring
-- **Error Handling**: Comprehensive error codes and recovery mechanisms
+- **Device Registration API**: Register and discover all slave devices
+- **Zone Management**: Create/update/delete zones with full configuration
+- **Irrigation Scheduling**: Advanced cron-like schedules (days of week, time-based)
+- **Real-Time Monitoring**: Aggregates sensor data from all slaves
+- **WebSocket Gateway**: Live updates to web dashboards
+- **Health Monitoring**: Tracks device status and connectivity
+- **Configuration Persistence**: Saves zones and settings to NVS flash
 
-### 🔹 Hardware Abstraction Layer (HAL)
+### 🔹 Slave Devices
 
-- **RTC Manager**: DS3231 real-time clock support
-- **Time Sync**: Automatic NTP → RTC → System time synchronization
-- **Heartbeat LED**: Visual system status indicator with 6 distinct patterns
-- **GPIO Management**: Pin configuration and control
+#### Sensor Slaves (12 Moisture Sensors)
+- **Calibrated Readings**: Automatic humidity calculation from analog values
+- **WebSocket Client**: Sends sensor data to master every 5 seconds
+- **Filtering**: Exponential moving average for noise reduction
+- **Voltage Monitoring**: Detects sensor faults and calibration issues
+- **GPIO Pins**: 12× analog inputs (pins 32-35, 39, 36, 25-27, 14, 12-13)
 
-### 🔹 Network Stack
+#### Relay Slaves (Irrigation Control)
+- **4 GPIO Relays**: 5V relay control for irrigation valves
+- **WebSocket Client**: Receives commands from master
+- **Manual Override**: Hardware buttons for emergency control
+- **State Feedback**: Reports relay status back to master
+- **Failsafe Logic**: Automatic shutdown on communication loss
 
-- **WiFi Manager**: Auto-connect, credential storage, supervision
-- **HTTP Client**: Full REST API support (GET, POST, PUT, DELETE, PATCH)
-- **NTP Manager**: Network time synchronization with timezone support
-- **OTA Manager**: Over-The-Air firmware updates via web interface
+### 🔹 Communication
 
-### 🔹 Application Framework
+- **ESP-NOW Protocol**:
+  - Direct chip-to-chip communication
+  - 1 Mbps speed, up to 250 meters range (outdoor)
+  - No WiFi/router required
+  - Works in harsh RF environments
 
-- **Dynamic App Loading**: Register and manage multiple applications
-- **State Management**: Start, stop, pause, resume applications
-- **Inter-App Communication**: HTTP-based IPC for distributed systems
-- **Resource Isolation**: Per-app memory and CPU tracking
+- **WebSocket Gateway**:
+  - Master ↔ Web Server/Dashboard
+  - Real-time sensor updates
+  - Remote command execution
+  - Support for multiple concurrent clients
 
-### 🔹 Irrigation Distribution (IRRIG Distro)
+### 🔹 Web API Server (FastAPI)
 
-Pre-built smart irrigation system with 3 specialized applications:
-
-1. **Master Controller**: Orchestrates irrigation schedules and monitors zones
-2. **Slave Sensors**: Reads soil moisture, temperature, humidity sensors
-3. **Slave Relays**: Controls irrigation valves and pumps
+- **Device Management**: Register, list, monitor devices
+- **Zone Configuration**: CRUD operations on zones
+- **Sensor Data**: Real-time moisture readings
+- **Irrigation Control**: Start/stop zones manually
+- **Configuration Backup**: Export/import device settings
+- **CORS Enabled**: Web dashboard integration ready
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     USER APPLICATIONS                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ Master App   │  │ Sensors App  │  │ Relays App   │      │
-│  │ (ID: 1)      │  │ (ID: 2)      │  │ (ID: 3)      │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ App Manager API
-┌─────────────────────────────────────────────────────────────┐
-│                    APPLICATION MANAGER                       │
-│  • Dynamic Loading  • State Management  • IPC               │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ Kernel API
-┌─────────────────────────────────────────────────────────────┐
-│                      KERNEL SERVICES                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │  Task    │  │  Memory  │  │   Log    │  │  Monitor │   │
-│  │ Manager  │  │ Manager  │  │  System  │  │  System  │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ HAL API
-┌─────────────────────────────────────────────────────────────┐
-│              HARDWARE ABSTRACTION LAYER (HAL)                │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │   RTC    │  │   Time   │  │ Heartbeat│  │   GPIO   │   │
-│  │ Manager  │  │   Sync   │  │   LED    │  │  Control │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ Network API
-┌─────────────────────────────────────────────────────────────┐
-│                      NETWORK STACK                           │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │   WiFi   │  │   HTTP   │  │   NTP    │  │   OTA    │   │
-│  │ Manager  │  │  Client  │  │ Manager  │  │ Manager  │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
+┌─────────────────────────────────────────────────────────────────┐
+│                      WEB LAYER                                   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Web Dashboard (React/Vue/HTML)                          │   │
+│  │  - Live sensor visualization                             │   │
+│  │  - Zone management interface                             │   │
+│  │  - Schedule configuration                                │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ REST API (JSON)
+┌────────────────────────────▼────────────────────────────────────┐
+│                    FASTAPI SERVER                                │
+│                   (192.168.1.72:3000)                           │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ • Device Registration API                               │   │
+│  │ • Zone Management (CRUD)                                │   │
+│  │ • Sensor Data Aggregation                               │   │
+│  │ • Irrigation Control                                    │   │
+│  │ • WebSocket Gateway                                     │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ WebSocket
+┌────────────────────────────▼────────────────────────────────────┐
+│            MASTER ESP32 (192.168.4.1:81)                        │
+│            ┌─────────────────────────────┐                      │
+│            │  Master Application         │                      │
+│            │ • Schedule Management       │                      │
+│            │ • Device Aggregation        │                      │
+│            │ • Data Logging              │                      │
+│            │ • Health Monitoring         │                      │
+│            └──────────┬──────────────────┘                      │
+│                       │ ESP-NOW (multicast)                     │
+│                       │                                          │
+│              ┌────────┴────────┬────────────┬────────────┐      │
+└──────────────┼────────────────┼────────────┼────────────┼──────┘
+               │                │            │            │
+    ┌──────────▼────────┐ ┌────▼──────────┐ │      ┌─────▼────────┐
+    │ SLAVE 1           │ │ SLAVE 2       │ │      │ SLAVE N      │
+    │ Sensor Device     │ │ Relay Device  │ │      │ (ext. zones) │
+    │                   │ │               │ │      │              │
+    │ • 12 Moisture     │ │ • 4 Relays    │ │      │ ...          │
+    │   Sensors         │ │ • 4 Zones     │ │      │              │
+    │ • WebSocket       │ │ • WebSocket   │ │      │              │
+    │   Client          │ │   Client      │ │      │              │
+    │ • ESP-NOW Peer    │ │ • ESP-NOW     │ │      │              │
+    │                   │ │   Peer        │ │      │              │
+    └───────────────────┘ └───────────────┘ │      └──────────────┘
+                                             │
+                            ┌────────────────┘
                             │
-┌─────────────────────────────────────────────────────────────┐
-│                  ESP32 HARDWARE (ESP-IDF)                    │
-│  • FreeRTOS  • WiFi  • NVS  • SPI  • I2C  • GPIO           │
-└─────────────────────────────────────────────────────────────┘
+                    ┌───────▼──────────┐
+                    │ SLAVE 3          │
+                    │ Extended Zones   │
+                    │ (future)         │
+                    └──────────────────┘
+```
+
+### 🔌 Communication Protocols
+
+| Layer | Protocol | Role | Speed | Range |
+|-------|----------|------|-------|-------|
+| **Device-to-Device** | ESP-NOW | P2P Real-time | 1 Mbps | 250m |
+| **Master-Server** | WebSocket | Live Updates | N/A | WiFi |
+| **External API** | REST (HTTP/HTTPS) | Web Integration | N/A | Network |
+| **Local Config** | NVS Flash | Persistent Store | N/A | Local |
+
+---
+
+## 🔧 Hardware Setup
+
+### Bill of Materials
+
+| Component | Qty | Purpose | Notes |
+|-----------|-----|---------|-------|
+| ESP32 DevKit V1 | 2-3 | Master + Slaves | Any ESP32 variant works |
+| Capacitive Moisture Sensor | 12 | Soil monitoring | Analog output (0-3.3V) |
+| 5V Relay Module | 4 | Valve control | 5V trigger, NO/NC contacts |
+| Micro USB Cable | 2-3 | Power & serial | For programming & power |
+| Irrigation Solenoids | 4 | Water control | 24V DC (optional, external) |
+| Breadboard/PCB | 1 | Component mount | For prototyping |
+| Jumper Wires | 40+ | Connections | Male/Female mix |
+| Power Supply | 1 | System power | 5V/2A minimum |
+
+### Sensor Pinout (Master & Slave #1)
+
+```
+ESP32 MASTER / SLAVE SENSOR
+┌─────────────────────────┐
+│  GND  VCC  TX  RX      │  USB
+├─┬───┬───┬───┬───┬──────┤
+│ │32 │33 │34 │35 │39    │ ← Moisture Sensors (s01-s05)
+├─┬───┬───┬───┬───┬──────┤
+│ │36 │25 │26 │27 │14    │ ← Moisture Sensors (s06-s10)
+├─┬───┬───┬───┬───┬──────┤
+│ │12 │13 │ D0│ D1│ ... │
+└─┴───┴───┴───┴───┴──────┘
+
+Analog ADC Inputs (12 total):
+• GPIO 32-35  → Sensors s01-s04
+• GPIO 39     → Sensor s05
+• GPIO 36     → Sensor s06
+• GPIO 25-27  → Sensors s07-s09
+• GPIO 14     → Sensor s10
+• GPIO 12-13  → Sensors s11-s12
+```
+
+### Relay Pinout (Slave #2)
+
+```
+ESP32 SLAVE RELAY
+┌─────────────────────────┐
+│  GND  VCC  TX  RX      │  USB
+├─┬───┬───┬───┬───┬──────┤
+│ │15 │4  │16 │17 │...  │ ← Relay Outputs (zone_1-4)
+├─┬───┬───┬───┬───┬──────┤
+│ │ D4│ D5│ D6│ D7│ ... │
+└─┴───┴───┴───┴───┴──────┘
+
+GPIO Digital Outputs (4 relays):
+• GPIO 15 → Relay Zone 1 (Potager Nord)
+• GPIO 4  → Relay Zone 2 (Jardin Sud)
+• GPIO 16 → Relay Zone 3 (Serre)
+• GPIO 17 → Relay Zone 4 (Verger)
+```
+
+### Wiring Example
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Master ESP32 (SENSOR READINGS)                      │
+│  ┌─────────────────────────────┐                     │
+│  │ Sensor s01  ──→ GPIO 32     │                     │
+│  │ Sensor s02  ──→ GPIO 33     │                     │
+│  │ ... (10 more sensors)        │                     │
+│  │ GND ────────────────────────→ GND (common)        │
+│  │ 5V ─────────────────────────→ VCC (sensors)       │
+│  └─────────────────────────────┘                     │
+│                                 │                     │
+│                    WiFi/ESP-NOW ↓                     │
+│                                                       │
+│  Slave ESP32 #1 (RELAYS) ┌──────────────────┐       │
+│  ┌────────────────────────┤ Relay Module     │       │
+│  │ GPIO 15 ──→ IN1        │ ┌──────────────┐ │       │
+│  │ GPIO 4  ──→ IN2        │ │ Solenoid z1  │ │       │
+│  │ GPIO 16 ──→ IN3        │ │ Solenoid z2  │ │       │
+│  │ GPIO 17 ──→ IN4        │ │ Solenoid z3  │ │       │
+│  │ GND ────→ GND          │ │ Solenoid z4  │ │       │
+│  │ 5V ─────→ VCC          │ └──────────────┘ │       │
+│  └────────────────────────┴──────────────────┘       │
+│                                                       │
+│  FastAPI Server (CONTROL)                            │
+│  192.168.1.72:3000 ──HTTP/WebSocket──→ Master      │
+└──────────────────────────────────────────────────────┘
+```
+
+### Network Configuration
+
+```
+Master Device (ESP32 #1):
+• AP SSID: "ESP32_MASTER"
+• AP Password: "12345678"
+• AP IP: 192.168.4.1
+• AP Port: 81
+
+FastAPI Server:
+• Host: 192.168.1.72 (your network)
+• Port: 3000
+• Base URL: http://192.168.1.72:3000
+```
+
+## 🚀 Quick Start Guide
+
+### Step 1: Prepare Hardware
+
+```bash
+# Assemble ESP32 boards with sensors and relays
+# Connect USB for programming
+# No WiFi required for initial setup (ESP-NOW works standalone)
+```
+
+### Step 2: Flash Master Device
+
+```bash
+# Connect Master ESP32 via USB
+cd /home/dorus/Documents/GitHub/DO-Core-Os
+
+# Build and upload Master firmware
+pio run --environment esp32dev --target upload
+
+# Monitor output
+pio device monitor --baud 115200
+```
+
+### Step 3: Flash Slave Devices
+
+```bash
+# Modify src/apps/ESP32_master/ESP32_master.cpp to set role
+# Change: #define DEVICE_ROLE DEVICE_ROLE_MASTER
+# To:     #define DEVICE_ROLE DEVICE_ROLE_SLAVE_SENSORS (or SLAVE_RELAYS)
+
+pio run --environment esp32dev --target upload
+
+# Repeat for each slave device
+```
+
+### Step 4: Start FastAPI Server
+
+```bash
+cd test_server
+
+# Start server on port 3000
+python3 irrigation_server.py
+
+# Expected output:
+# INFO:     Uvicorn running on http://0.0.0.0:3000 (Press CTRL+C to quit)
+```
+
+### Step 5: Register Device
+
+```bash
+# In another terminal, register the Master device
+curl -X POST http://localhost:3000/api/devices/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "device",
+    "deviceId": "ESP32_IRRIGATION_11100454456464674",
+    "capacity": {"zones": 4, "sensors": 12},
+    "timestamp": "2025-11-25T00:00:00"
+  }'
+
+# Response:
+# {"message": "Device registered", "device_id": "ESP32_IRRIGATION_11100454456464674"}
+```
+
+### Step 6: Create Test Zones
+
+```bash
+cd test_server
+
+# Create 4 sample zones with irrigation schedules
+./create_test_zones.sh
+
+# Or just 1 zone for testing:
+./create_test_zones.sh 1-zone
+
+# Expected output:
+# ✅ Test Zones Created!
+```
+
+### Step 7: Verify System
+
+```bash
+# Check devices are online
+curl http://localhost:3000/api/devices | jq
+
+# Check zones
+curl http://localhost:3000/api/devices/ESP32_IRRIGATION_11100454456464674/zones | jq
+
+# Check sensor data
+curl http://localhost:3000/api/devices/ESP32_IRRIGATION_11100454456464674/config | jq
+
+# Monitor real-time logs
+pio device monitor --baud 115200 | grep -E "INFO|WARN|ERROR"
 ```
 
 ---
 
-## 🔧 Hardware Requirements
+## ⚙️ Master Device Configuration
 
-### Minimum Requirements
+### Firmware Configuration
 
-- **MCU**: ESP32 (any variant)
-- **RAM**: 320KB (built-in)
-- **Flash**: 4MB minimum
-- **WiFi**: 2.4GHz 802.11 b/g/n
-
-### Recommended Setup
-
-- **Board**: ESP32 DevKit V1
-- **RTC**: DS3231 (optional, for time persistence)
-- **LED**: Built-in LED on GPIO 2 (heartbeat indicator)
-- **Sensors**: Capacitive soil moisture sensors (for irrigation)
-- **Relays**: 5V relay modules (for valve control)
-
-### Pin Configuration
-
-| Component | GPIO | Description |
-|-----------|------|-------------|
-| Heartbeat LED | 2 | System status indicator |
-| I2C SDA | 21 | RTC communication |
-| I2C SCL | 22 | RTC communication |
-| Relay Zone 1 | 15 | Irrigation valve 1 |
-| Relay Zone 2 | 4 | Irrigation valve 2 |
-| Relay Zone 3 | 16 | Irrigation valve 3 |
-| Relay Zone 4 | 17 | Irrigation valve 4 |
-
----
-
-## 🚀 Quick Start
-
-### 1. Prerequisites
-
-```bash
-# Install PlatformIO
-pip install platformio
-
-# Clone repository
-git clone https://github.com/dorusrdt/DO-Core-Os.git
-cd DO-Core-Os
-```
-
-### 2. Build & Flash
-
-```bash
-# Build firmware
-pio run
-
-# Upload to ESP32
-pio run --target upload --upload-port /dev/ttyUSB0
-
-# Monitor serial output
-pio device monitor --port /dev/ttyUSB0 --baud 115200
-```
-
-### 3. First Boot
-
-After flashing, you'll see the system logo:
-
-```
-        ██████╗ ██ ██████╗      OS: D'O-CORE v1.0.0 "IRRIG Distro"
-        ██╔══██╗ ██╔═══██╗      Host: ESP32 DevKit
-        ██║  ██║ ██║   ██║      Kernel: ESP-IDF
-        ██║  ██║ ██║   ██║      Uptime: 0h 0m 15s
-        ██████╔╝ ╚██████╔╝      Packages: 8 tasks
-        ╚═════╝  ╚═════╝        Shell: DORUS-CORE CLI
-                                CPU: 240MHz
-                                Memory: 82MB / 320MB
-                                System Health: HEALTHY
-                                WiFi: DISCONNECTED
-                                IP: N/A
-                                Logs: 45/1000 messages
-                                Local Time: 00:00:15
-
-       v1.0.0 "IRRIG Distro OTA chg"
-
-D'O-Core>
-```
-
-### 4. Configure WiFi
-
-```bash
-D'O-Core> wifi_save MySSID MyPassword
-D'O-Core> reboot
-```
-
-### 5. Configure Device Role
-
-```bash
-# Set as Master controller
-D'O-Core> irrig_set_role master
-D'O-Core> irrig_config_save
-D'O-Core> reboot
-```
-
----
-
-## 🧩 System Components
-
-### Core Kernel
-
-#### Task Manager
-- **Priority Levels**: LOW, NORMAL, HIGH, CRITICAL
-- **Stack Sizes**: SMALL (2KB), MEDIUM (4KB), LARGE (8KB)
-- **Core Pinning**: Assign tasks to specific CPU cores
-- **Statistics**: Track CPU time, memory usage per task
-
-#### Memory Manager
-- **Allocation Tracking**: Monitor all malloc/free operations
-- **Leak Detection**: Identify memory leaks in real-time
-- **Fragmentation Analysis**: Track heap fragmentation
-- **Statistics**: Free heap, largest block, allocation count
-
-#### Log System
-- **Levels**: DEBUG, INFO, WARN, ERROR, CRITICAL
-- **Circular Buffer**: 1000 messages with automatic rotation
-- **Persistence**: Save logs to NVS flash
-- **Filtering**: Query logs by level, time, or keyword
-
-#### System Monitor
-- **Health Checks**: CPU, memory, WiFi, RTC status
-- **Uptime Tracking**: System runtime in seconds
-- **Watchdog**: Automatic recovery from crashes
-- **Alerts**: Configurable thresholds for warnings
-
----
-
-## 💻 CLI Commands
-
-The D'O-Core OS includes an interactive command-line interface with 100+ commands organized into categories:
-
-### System Commands
-
-```bash
-help                    # Show all commands
-system_info            # Display system information
-system_health          # Check system health
-reboot                 # Restart system
-uptime                 # Show system uptime
-```
-
-### Task Management
-
-```bash
-task_list              # List all running tasks
-task_info <id>         # Show task details
-task_stats             # Task statistics
-```
-
-### Memory Management
-
-```bash
-mem_info               # Memory usage statistics
-mem_stats              # Detailed memory analysis
-heap_info              # Heap fragmentation info
-```
-
-### WiFi Management
-
-```bash
-wifi_scan              # Scan for networks
-wifi_save <ssid> <pwd> # Save WiFi credentials
-wifi_connect           # Connect to saved network
-wifi_status            # Show WiFi status
-wifi_ip                # Show IP address
-```
-
-### Application Management
-
-```bash
-app_list               # List registered apps
-app_start <id>         # Start application
-app_stop <id>          # Stop application
-app_pause <id>         # Pause application
-app_resume <id>        # Resume application
-app_info <id>          # Show app details
-```
-
-### Irrigation Commands
-
-```bash
-irrig_set_role <role>  # Set device role (master/slave1/slave2)
-irrig_activate_role    # Activate configured role
-irrig_config_show      # Show irrigation config
-irrig_config_save      # Save config to NVS
-irrig_status           # Show irrigation status
-```
-
-### HTTP Client
-
-```bash
-http_get <url>         # HTTP GET request
-http_post <url> <data> # HTTP POST request
-http_stats             # HTTP statistics
-```
-
-### OTA Updates
-
-```bash
-ota_start              # Start OTA server
-ota_stop               # Stop OTA server
-ota_status             # OTA server status
-ota_info               # Firmware version info
-```
-
-### Log System
-
-```bash
-log_show               # Display recent logs
-log_clear              # Clear log buffer
-log_save               # Save logs to NVS
-log_stats              # Log statistics
-```
-
-### Time Management
-
-```bash
-time_show              # Show current time
-time_sync              # Sync time (NTP/RTC)
-time_set <timestamp>   # Set system time
-rtc_read               # Read RTC time
-rtc_write              # Write to RTC
-```
-
----
-
-## 📱 Application Framework
-
-### Creating a Custom Application
+Edit `src/apps/ESP32_master/ESP32_master.cpp`:
 
 ```cpp
-#include "kernel/app/app_manager.h"
+// Set device role
+#define DEVICE_ROLE DEVICE_ROLE_MASTER
 
-// Application callbacks
-void my_app_init(void) {
-    // Initialize your app
-}
+// Configuration AP
+static const char* ap_ssid = "ESP32_MASTER";
+static const char* ap_pass = "12345678";
 
-void my_app_start(void) {
-    // Start your app logic
-}
+// Server connection (FastAPI backend)
+static const char* server_ip = "192.168.1.72";
+static const uint16_t server_port = 3000;
 
-void my_app_loop(void) {
-    // Main loop (called repeatedly)
-}
-
-void my_app_stop(void) {
-    // Cleanup on stop
-}
-
-// Register application
-SysError_t register_my_app(void) {
-    AppInfo_t info = {
-        .app_id = 0,  // Auto-assigned
-        .name = "MyApp",
-        .description = "My custom application",
-        .version = "1.0.0",
-        .priority = PRIORITY_NORMAL,
-        .stack_size = STACK_SIZE_MEDIUM,
-        .auto_start = false
-    };
-    
-    AppCallbacks_t callbacks = {
-        .init = my_app_init,
-        .start = my_app_start,
-        .loop = my_app_loop,
-        .stop = my_app_stop
-    };
-    
-    return app_register(&info, &callbacks);
-}
+// Zone configuration (up to 8)
+#define MAX_ZONES 4
 ```
 
-### Application Lifecycle
+### Available CLI Commands (Master)
 
+```bash
+D'O-Core> irrig_status
+  ✓ Master Controller Online
+  • Zones: 4 active
+  • Sensors: 12 connected
+  • Slaves: 2 devices online
+
+D'O-Core> irrig_zone_list
+  Zone 1: Potager Nord (GPIO 15) - Active
+  Zone 2: Jardin Sud (GPIO 4) - Active
+  Zone 3: Serre (GPIO 16) - Idle
+  Zone 4: Verger (GPIO 17) - Idle
+
+D'O-Core> irrig_zone_start 1
+  ✓ Zone 1 irrigation started
+
+D'O-Core> irrig_zone_stop 1
+  ✓ Zone 1 irrigation stopped
+
+D'O-Core> esp_now_scan
+  Found 2 ESP-NOW peers:
+  • 84:F7:03:BB:1234 (Slave Sensors)
+  • 84:F7:03:BB:5678 (Slave Relays)
 ```
-UNLOADED → LOADING → RUNNING → PAUSED → STOPPED
-                         ↓
-                      ERROR
+
+### Zone Configuration Format
+
+```json
+{
+  "zoneId": "zone_potager_nord",
+  "zoneNumber": 1,
+  "physicalZoneNumber": 1,
+  "waterPerDay": 2000,
+  "humidityThreshold": 80,
+  "sensors": ["s01", "s02", "s03"],
+  "irrigationSchedule": [
+    {
+      "time": "08:00",
+      "duration": 15,
+      "daysOfWeek": [1, 3, 5],
+      "isActive": true
+    },
+    {
+      "time": "18:00",
+      "duration": 10,
+      "daysOfWeek": [0, 2, 4, 6],
+      "isActive": true
+    }
+  ]
+}
 ```
 
 ---
 
-## 💡 Visual Feedback
+## 🔌 Slave Device Configuration
 
-### Heartbeat LED Patterns
+### Sensor Slave
 
-The built-in LED (GPIO 2) provides real-time system status:
+```cpp
+#define DEVICE_ROLE DEVICE_ROLE_SLAVE_SENSORS
 
-| Pattern | Description | Meaning |
-|---------|-------------|---------|
-| 🔴 **Rapid (25ms)** | ▓░▓░▓░▓░▓░ | System booting |
-| 🟢 **Slow (1s)** | ▓▓▓▓▓░░░░░ | Ready, WiFi connected |
-| 🔵 **Double Pulse** | ▓░▓░░░░░░░ | Application running |
-| 🟡 **Fast (100ms)** | ▓░▓░▓░▓░ | WiFi error |
-| 🔴 **Solid ON** | ▓▓▓▓▓▓▓▓▓▓ | Critical error |
-| ⚫ **OFF** | ░░░░░░░░░░ | System halted |
+// Calibration values (humidity = (V - V_MIN) / (V_MAX - V_MIN) * 100)
+#define SENSOR_V_MIN 1.50  // Wet (fully hydrated)
+#define SENSOR_V_MAX 3.15  // Dry (fully desiccated)
+
+#define MAX_SENSORS 12
+#define SENSOR_READ_INTERVAL_MS 5000  // Read every 5 seconds
+#define SENSOR_SEND_INTERVAL_MS 5000  // Send every 5 seconds
+```
+
+### Relay Slave
+
+```cpp
+#define DEVICE_ROLE DEVICE_ROLE_SLAVE_RELAYS
+
+#define MAX_RELAYS 4
+#define RELAY_GPIO_1 15
+#define RELAY_GPIO_2 4
+#define RELAY_GPIO_3 16
+#define RELAY_GPIO_4 17
+
+#define RELAY_ACTIVE_HIGH  // Relay ON = HIGH
+// #define RELAY_ACTIVE_LOW   // Relay ON = LOW (for inverted logic)
+```
 
 ---
 
-## 🌐 Network Services
+## 📡 API Specifications
 
-### WiFi Manager
+### REST Endpoints (FastAPI Server)
 
-- **Auto-Connect**: Automatically connects to saved network on boot
-- **Credential Storage**: Persistent WiFi credentials in NVS
-- **Supervision**: Monitors connection and auto-reconnects
-- **Signal Monitoring**: RSSI tracking and weak signal warnings
+#### Device Management
 
-### HTTP Client
+```bash
+# Register device
+POST /api/devices/register
+Content-Type: application/json
+{
+  "type": "device",
+  "deviceId": "ESP32_IRRIGATION_11100454456464674",
+  "capacity": {"zones": 4, "sensors": 12},
+  "timestamp": "2025-11-25T00:00:00"
+}
 
-- **Full REST API**: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
-- **JSON Support**: Built-in ArduinoJson integration
-- **Retry Logic**: Configurable retry count and delays
-- **Statistics**: Track requests, failures, response times
+# List all devices
+GET /api/devices
 
-### NTP Manager
+# Get device status
+GET /api/devices/{device_id}
 
-- **Time Synchronization**: Automatic NTP sync on WiFi connect
-- **Timezone Support**: Configurable timezone and DST
-- **Business Hours**: Built-in business/night time detection
-- **Fallback**: Uses RTC if NTP unavailable
+# Get device health
+GET /api/devices/{device_id}/health
+```
 
-### OTA Manager
+#### Zone Management
 
-- **Web Interface**: ElegantOTA web-based updater
-- **Progress Tracking**: Real-time upload progress
-- **Auto-Reboot**: Automatic restart after successful update
-- **Rollback**: Keeps previous firmware for recovery
+```bash
+# Create zone
+POST /api/devices/{device_id}/zones
+Content-Type: application/json
+{
+  "zoneId": "zone_potager",
+  "physicalZoneNumber": 1,
+  "waterPerDay": 2000,
+  "irrigationTime": 900,
+  "humidityThreshold": 80,
+  "sensors": ["s01", "s02", "s03"],
+  "irrigationSchedule": [...]
+}
 
-**Access OTA**: `http://<ESP32_IP>:3232/update`
+# Get all zones
+GET /api/devices/{device_id}/zones
+
+# Get zone details
+GET /api/devices/{device_id}/zones/{zone_id}
+
+# Update zone
+PUT /api/devices/{device_id}/zones/{zone_id}
+
+# Delete zone
+DELETE /api/devices/{device_id}/zones/{zone_id}
+```
+
+#### Configuration & Control
+
+```bash
+# Get device config (for ESP32)
+GET /api/devices/{device_id}/config
+
+# Get sensor data
+GET /api/devices/{device_id}/sensors
+
+# Start irrigation
+POST /api/devices/{device_id}/zones/{zone_id}/start
+
+# Stop irrigation
+POST /api/devices/{device_id}/zones/{zone_id}/stop
+
+# Get config hash (for delta sync)
+GET /api/devices/{device_id}/config/hash
+```
+
+### WebSocket Events (Master ↔ Server)
+
+```javascript
+// Sensor data stream
+ws.send({ type: 'sensor_data', data: { s01: 65.5, s02: 72.3, ... } })
+
+// Zone status update
+ws.send({ type: 'zone_status', zone_id: 'zone_1', status: 'RUNNING' })
+
+// Irrigation event
+ws.send({ type: 'irrigation_event', zone_id: 'zone_1', event: 'started' })
+
+// Device health
+ws.send({ type: 'health_check', status: 'OK', timestamp: 1234567890 })
+```
+
+---
+
+## ✅ Testing & Validation
+
+### Unit Tests
+
+```bash
+cd test_server
+
+# Test all endpoints
+python3 -m pytest test_*.py -v
+
+# Test with coverage
+python3 -m pytest test_*.py --cov --cov-report=html
+```
+
+### Manual Integration Testing
+
+```bash
+# 1. Start server
+python3 irrigation_server.py &
+
+# 2. Register device
+curl -X POST http://localhost:3000/api/devices/register \
+  -H "Content-Type: application/json" \
+  -d '{"type":"device","deviceId":"TEST_DEVICE","capacity":{"zones":4,"sensors":12},"timestamp":"2025-11-25T00:00:00"}'
+
+# 3. Create zones
+./create_test_zones.sh
+
+# 4. Verify zones were created (should return 4 zones)
+curl http://localhost:3000/api/devices/TEST_DEVICE/zones | jq '.[] | .zoneId'
+
+# 5. Check sensor format (should have s01-s12, NOT s_01-s_12)
+curl http://localhost:3000/api/devices/TEST_DEVICE/config | jq '.zones[0]'
+
+# 6. Monitor live sensor data
+while true; do curl -s http://localhost:3000/api/devices/TEST_DEVICE/config | jq '.sensor_data'; sleep 5; done
+```
+
+### Hardware Validation
+
+```bash
+# 1. Check Master is broadcasting
+pio device monitor | grep "ESP-NOW"
+
+# 2. Check Slaves are connected
+pio device monitor | grep "WebSocket"
+
+# 3. Verify sensor readings (should be 0-100%)
+pio device monitor | grep "Sensor"
+
+# 4. Test relay activation
+curl -X POST http://localhost:3000/api/devices/TEST_DEVICE/zones/zone_1/start
+# Watch GPIO for relay trigger
+
+# 5. Monitor relay stop
+curl -X POST http://localhost:3000/api/devices/TEST_DEVICE/zones/zone_1/stop
+```
+
+### Common Issues & Solutions
+
+| Issue | Root Cause | Solution |
+|-------|-----------|----------|
+| **Server connection refused** | Server not running | Start: `python3 irrigation_server.py` |
+| **Device not registered** | Missing registration | Run: `curl -X POST .../devices/register` |
+| **Sensor data showing "data not available"** | Field name mismatch (s_01 vs s01) | Already fixed in latest create_test_zones.sh |
+| **Zone creation fails** | Invalid JSON | Check: `bash -n create_test_zones.sh` |
+| **Relay not responding** | GPIO pin misconfiguration | Verify pins match ESP32_master.cpp |
+| **No WiFi connection** | Wrong SSID/password | Set manually: `wifi_save SSID PASSWORD` |
+
+---
+
+## 🐛 Troubleshooting
+
+### ESP32 Not Connecting to Master
+
+```bash
+# 1. Check ESP-NOW is enabled
+pio device monitor | grep "ESP-NOW"
+
+# 2. Verify MAC addresses match
+pio device monitor | grep "MAC"
+
+# 3. Check power supply (brownout restarts indicate low power)
+pio device monitor | grep -i "brownout"
+
+# 4. Reset both devices
+# Hold RESET button for 3 seconds on each device
+```
+
+### Server Not Receiving Sensor Data
+
+```bash
+# 1. Check WebSocket is connected
+tail -f server.log | grep "WebSocket"
+
+# 2. Verify JSON format (s01, not s_01)
+curl http://localhost:3000/api/devices/DEVICE_ID/config | jq '.zones[0].sensors'
+
+# 3. Check sensor calibration values
+pio device monitor | grep "Sensor.*voltage"
+
+# 4. Look for timeout errors
+curl -v http://localhost:3000/api/devices/DEVICE_ID/health
+```
+
+### Irrigation Not Triggering
+
+```bash
+# 1. Verify zone configuration
+curl http://localhost:3000/api/devices/DEVICE_ID/zones/ZONE_ID | jq '.irrigationSchedule'
+
+# 2. Check relay GPIO
+pio device monitor | grep "GPIO.*HIGH"
+
+# 3. Manually test relay
+curl -X POST http://localhost:3000/api/devices/DEVICE_ID/zones/ZONE_ID/start
+
+# 4. Verify power to relay module (check LED on relay module)
+```
+
+### Memory/Performance Issues
+
+```bash
+# Check available memory
+D'O-Core> mem_info
+Free Heap: 245760 bytes
+
+# If low, reduce:
+# - SENSOR_READ_INTERVAL_MS (increase to reduce reads)
+# - WebSocket buffer size (in server)
+# - Log buffer size (CONFIG_FREERTOS_HZ)
+
+# Recompile with optimizations
+pio run -e esp32dev --target clean
+pio run -e esp32dev -O aggressive
+```
 
 ---
 
@@ -495,87 +745,158 @@ The built-in LED (GPIO 2) provides real-time system status:
 ```
 DO-Core-Os/
 ├── src/
-│   ├── main.cpp                    # Main entry point
-│   ├── kernel/
-│   │   ├── core/                   # Core kernel services
-│   │   │   ├── kernel.h            # System definitions
-│   │   │   ├── task_manager.*      # Task management
-│   │   │   ├── memory_manager.*    # Memory management
-│   │   │   ├── log_system.*        # Logging system
-│   │   │   └── system_monitor.*    # Health monitoring
-│   │   ├── hal/                    # Hardware abstraction
-│   │   │   ├── rtc_manager.*       # RTC DS3231
-│   │   │   ├── time_sync_manager.* # Time synchronization
-│   │   │   └── heartbeat_led.*     # LED status indicator
-│   │   ├── network/                # Network stack
-│   │   │   ├── wifi_manager.*      # WiFi management
-│   │   │   ├── http_client.*       # HTTP client
-│   │   │   ├── ntp_manager.*       # NTP client
-│   │   │   └── ota_manager.*       # OTA updates
-│   │   ├── app/                    # Application framework
-│   │   │   └── app_manager.*       # App lifecycle
-│   │   └── interface/              # CLI interface
-│   │       └── interface.*         # Command processor
-│   └── apps/                       # User applications
-│       ├── irrig_app_master/       # Master controller
-│       ├── irrig_app_slave_sensors/# Sensor reader
-│       ├── irrig_app_slave_relays/ # Relay controller
-│       └── irrig_common/           # Shared irrigation code
+│   ├── main.cpp                           # Main entry point
+│   ├── apps/
+│   │   ├── ESP32_master/
+│   │   │   ├── ESP32_master.h            # Master app header
+│   │   │   ├── ESP32_master.cpp          # Master controller logic
+│   │   │   └── irrigation_common.h       # Shared structures
+│   │   ├── ESP32_sensor/
+│   │   │   ├── ESP32_sensor.h            # Sensor app header
+│   │   │   ├── ESP32_sensor.cpp          # Sensor reading logic
+│   │   │   └── MoistureSensor.h          # Calibration class
+│   │   ├── ESP32_relay/
+│   │   │   ├── ESP32_relay.h             # Relay app header
+│   │   │   └── ESP32_relay.cpp           # Relay control logic
+│   │   └── example_app/
+│   │       └── example_app.cpp           # Template for new apps
+│   │
+│   └── kernel/
+│       ├── app/
+│       │   └── app_manager.h             # Application framework
+│       ├── core/
+│       │   ├── kernel.h                  # System definitions
+│       │   ├── task_manager.h            # FreeRTOS wrapper
+│       │   ├── memory_manager.h          # Memory tracking
+│       │   ├── log_system_optimized.h    # Logging system
+│       │   └── system_monitor.h          # Health monitoring
+│       ├── hal/
+│       │   ├── rtc_manager.h             # DS3231 I2C
+│       │   ├── time_sync_manager.h       # NTP/RTC sync
+│       │   └── heartbeat_led.h           # Status LED patterns
+│       └── network/
+│           ├── wifi_manager.h            # WiFi management
+│           ├── http_client.h             # HTTP REST client
+│           ├── websocket_client.h        # WebSocket for master
+│           └── esp_now_manager.h         # ESP-NOW protocol
+│
+├── test_server/
+│   ├── irrigation_server.py              # FastAPI backend (v2.0)
+│   ├── create_test_zones.sh              # Zone creation script (FIXED)
+│   ├── start_irrigation_server.sh        # Server launcher
+│   ├── GUIDE_UTILISATION_create_test_zones.md
+│   └── quick_validation_test.sh          # Testing script
+│
+├── platformio.ini                        # Build configuration
 ├── include/
-│   └── config.h                    # System configuration
-├── platformio.ini                  # PlatformIO config
-├── README.md                       # This file
-└── LICENSE                         # MIT License
+│   └── config.h                          # System config
+├── lib/                                  # Third-party libraries
+├── doc/                                  # Documentation
+├── README.md                             # This file (UPDATED)
+└── LICENSE                               # MIT License
 ```
+
+### Key Files Updated
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `src/apps/ESP32_master/ESP32_master.cpp` | Master controller | ✅ Working |
+| `src/apps/ESP32_sensor/ESP32_sensor.cpp` | Sensor reader (12×) | ✅ Working |
+| `test_server/irrigation_server.py` | FastAPI backend | ✅ v2.0 (Zone management added) |
+| `test_server/create_test_zones.sh` | Zone automation | ✅ Fixed (s01-s12 format, 1-zone option) |
 
 ---
 
 ## 🛠️ Development
 
-### Building from Source
+### Prerequisites
 
 ```bash
-# Install dependencies
-pio lib install
+# Install PlatformIO
+pip install platformio
 
-# Build
-pio run
+# Install FastAPI dependencies
+pip install fastapi uvicorn pydantic
 
-# Clean build
-pio run --target clean
-pio run
+# Clone repository
+git clone https://github.com/dorusrdt/DO-Core-Os.git
+cd DO-Core-Os
 ```
 
-### Debugging
+### Building Firmware
 
 ```bash
-# Enable verbose logging
-# In config.h, set:
-#define LOG_LEVEL_DEFAULT LOG_LEVEL_DEBUG
+# Build Master firmware
+pio run --environment esp32dev
 
-# Monitor serial output
+# Upload to specific port
+pio run --environment esp32dev --target upload --upload-port /dev/ttyUSB0
+
+# Monitor with filtering
+pio device monitor --baud 115200 | grep -E "Master|Sensor|Relay"
+```
+
+### Development Workflow
+
+```bash
+# 1. Make changes to source code
+# 2. Build and test
+pio run --environment esp32dev
+
+# 3. Flash to device
+pio run --environment esp32dev --target upload
+
+# 4. Monitor output in real-time
 pio device monitor --baud 115200
+
+# 5. Check for memory leaks
+pio device monitor | grep "Free Heap"
+
+# 6. Commit changes
+git add .
+git commit -m "Feature: Add new functionality"
+git push origin main
 ```
 
-### Adding a New Module
+### Adding New Features
 
-1. Create module files in appropriate directory
-2. Add header include in `kernel.h`
-3. Initialize in `main.cpp` setup()
-4. Register CLI commands in `interface.cpp`
+1. **Create new app**: Copy `example_app/example_app.cpp` and modify
+2. **Register in main.cpp**: Add `register_my_app()` call in `setup()`
+3. **Test independently**: Compile and verify with simpler tasks first
+4. **Integrate**: Connect to other apps via HTTP/WebSocket
+5. **Document**: Update README.md with new features
 
 ### Memory Optimization
 
 ```cpp
-// Check memory usage
-D'O-Core> mem_info
-Free Heap: 245760 bytes
-Largest Block: 110592 bytes
-Allocations: 156
+// Check memory before/after changes
+Serial.printf("Free heap: %u bytes\n", ESP.getFreeHeap());
 
-// Reduce stack sizes if needed
-#define STACK_SIZE_SMALL  2048  // 2KB
-#define STACK_SIZE_MEDIUM 4096  // 4KB
+// Reduce unnecessary allocations
+static char buffer[512];  // Stack allocation (better)
+// vs
+char* buffer = (char*)malloc(512);  // Heap allocation (slower)
+
+// Use const where possible
+const char* ssid = "WIFI";  // PROGMEM on ESP32
+
+// Monitor with:
+D'O-Core> mem_info
+```
+
+### Debugging Tips
+
+```cpp
+// Use debug logging
+#define SENSOR_LOG(level, fmt, ...) \
+    kernel_log(level, "[Component] " fmt, ##__VA_ARGS__)
+
+// Monitor specific events
+SENSOR_LOG(LOG_LEVEL_DEBUG, "Sensor %d: %.2f%%", id, humidity);
+
+// Check network connectivity
+SENSOR_LOG(LOG_LEVEL_INFO, "WebSocket %s",
+    webSocket->isConnected() ? "CONNECTED" : "DISCONNECTED");
 ```
 
 ---
@@ -584,18 +905,31 @@ Allocations: 156
 
 Contributions are welcome! Please follow these guidelines:
 
+### Process
+
 1. **Fork** the repository
 2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
+3. **Write** clear, documented code
+4. **Test** thoroughly on hardware
+5. **Commit** with descriptive messages
+6. **Push** to your fork
+7. **Open** a Pull Request with details
 
 ### Code Style
 
-- Use **4 spaces** for indentation
-- Follow **C++11** standards
-- Add **comments** for complex logic
-- Update **documentation** for new features
+- **Language**: C++11 standard
+- **Indentation**: 4 spaces
+- **Comments**: Document complex logic
+- **Naming**: CamelCase for functions, snake_case for variables
+- **Headers**: Include guards and brief descriptions
+
+### Testing Requirements
+
+- ✅ Code compiles without warnings
+- ✅ Tested on ESP32 hardware
+- ✅ Memory usage acceptable (>50KB free)
+- ✅ Documentation updated
+- ✅ No breaking changes to API
 
 ---
 
@@ -603,44 +937,92 @@ Contributions are welcome! Please follow these guidelines:
 
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
+Permissions:
+- ✅ Commercial use
+- ✅ Modification
+- ✅ Distribution
+- ✅ Private use
+
+Limitations:
+- ❌ Liability
+- ❌ Warranty
+
 ---
 
 ## 👨‍💻 Author
 
-**D'Orus Tsitera**  
+**D'Orus Tsitera**
 *Embedded Systems Engineer*
 
 - 🌐 GitHub: [@dorusrdt](https://github.com/dorusrdt)
-- 📧 Email: dorus.tsitera@example.com
-- 💼 LinkedIn: [D'Orus Tsitera](https://linkedin.com/in/dorus-tsitera)
+- 💼 Project: Smart Irrigation Control System v2.0
+- 🔧 Technologies: ESP32, ESP-NOW, FastAPI, Arduino
+
+---
+
+## 📚 Documentation Index
+
+| Document | Purpose |
+|----------|---------|
+| **README.md** | System overview (THIS FILE) |
+| **GUIDE_UTILISATION_create_test_zones.md** | How to use zone creation script |
+| **GUIDE_DEMARRAGE_RAPIDE.md** | French quick start guide |
+| **ESPNOW_CONFIGURATION_MASTER_2_SLAVES.md** | ESP-NOW setup details |
+| **API_SPECIFICATIONS.md** | Complete API reference |
+| **platformio.ini** | Build configuration |
+
+---
+
+## 🎯 Roadmap
+
+### v2.0.0 (Current) ✅
+- [x] Master-Slave architecture
+- [x] ESP-NOW communication
+- [x] FastAPI backend with zone management
+- [x] 12 soil moisture sensors
+- [x] 4 relay controls
+- [x] Web API with CORS
+- [x] Real-time WebSocket updates
+
+### v2.1.0 (Planned)
+- [ ] Mobile app (React Native)
+- [ ] Advanced scheduling (moon phases, weather integration)
+- [ ] Sensor calibration UI
+- [ ] Multi-language support
+- [ ] Data export (CSV/JSON)
+- [ ] Historical graphs
+
+### v3.0.0 (Future)
+- [ ] Cloud sync (AWS IoT Core)
+- [ ] Machine learning (predict watering needs)
+- [ ] Drone integration (aerial monitoring)
+- [ ] LoRaWAN support (long-range)
+- [ ] Autonomous mode (solar + battery)
 
 ---
 
 ## 🙏 Acknowledgments
 
 - **Espressif Systems** - ESP32 platform and ESP-IDF
-- **Arduino Community** - Arduino framework for ESP32
-- **FreeRTOS** - Real-time operating system kernel
-- **PlatformIO** - Development platform
-- **ElegantOTA** - Web-based OTA library
-
----
-
-## 📊 Statistics
-
-- **Lines of Code**: ~15,000
-- **Modules**: 20+
-- **CLI Commands**: 100+
-- **Applications**: 3 (Irrigation Distribution)
-- **Development Time**: 6+ months
-- **Target Platform**: ESP32 (all variants)
+- **Arduino Community** - Arduino framework and libraries
+- **FreeRTOS** - Real-time kernel
+- **PlatformIO** - Build and development platform
+- **FastAPI** - Modern Python web framework
+- **Community Contributors** - Bug reports and suggestions
 
 ---
 
 <div align="center">
 
-**⭐ Star this project if you find it useful!**
+### 🌱 Smart Irrigation Made Simple
 
-Made with ❤️ by D'Orus Tsitera
+**D'O-Core OS v2.0** - Production-Grade ESP32 Distributed System
+
+[⭐ Star this project if you find it useful!](https://github.com/dorusrdt/DO-Core-Os)
+
+Made with ❤️ by [D'Orus Tsitera](https://github.com/dorusrdt)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Latest Release](https://img.shields.io/github/release/dorusrdt/DO-Core-Os.svg)](https://github.com/dorusrdt/DO-Core-Os/releases)
 
 </div>
