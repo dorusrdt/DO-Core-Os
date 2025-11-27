@@ -139,27 +139,41 @@ static void parseIrrigationSchedules(ZoneSlot* zoneSlot, JsonObject zone);
 // Update sensor data from ESP32_sensor slave
 // IMPORTANT: Parse directement le JSON reçu et stocke-le dans slaveSensorData
 static void updateSlaveSensorData(uint8_t slaveId, String data) {
-    // Parser directement le JSON reçu dans slaveSensorData
-    DeserializationError error = deserializeJson(slaveSensorData, data);
+    MASTER_LOG(LOG_LEVEL_INFO, "=== RECEIVING SENSOR DATA FROM SLAVE %u ===", slaveId);
+    MASTER_LOG(LOG_LEVEL_DEBUG, "Raw JSON data (%u bytes): %s", data.length(), data.c_str());
+
+    // Créer un document temporaire pour parser en sécurité
+    DynamicJsonDocument tempDoc(1024);
+    DeserializationError error = deserializeJson(tempDoc, data);
 
     if (error) {
-        MASTER_LOG(LOG_LEVEL_WARN, "Failed to parse sensor data from slave_%u: %s", slaveId, error.c_str());
-        MASTER_LOG(LOG_LEVEL_DEBUG, "Raw data: %s", data.c_str());
+        MASTER_LOG(LOG_LEVEL_ERROR, "❌ JSON parse failed from slave_%u: %s", slaveId, error.c_str());
         return;
     }
 
+    // Copier les données parsées dans le stockage global
+    slaveSensorData.clear();
+    for (JsonPair kv : tempDoc.as<JsonObject>()) {
+        slaveSensorData[kv.key()] = kv.value();
+    }
+
     slaveSensorDataLastUpdate = millis();
-    MASTER_LOG(LOG_LEVEL_INFO, "Received sensor data from slave_%u | bytes=%u", slaveId, data.length());
-    MASTER_LOG(LOG_LEVEL_DEBUG, "Sensor data parsed successfully, sensors: %d", slaveSensorData.size());
+    MASTER_LOG(LOG_LEVEL_INFO, "✅ Sensor data parsed and stored successfully from slave_%u", slaveId);
+    MASTER_LOG(LOG_LEVEL_INFO, "   JSON size: %d keys", slaveSensorData.size());
+    MASTER_LOG(LOG_LEVEL_INFO, "   Timestamp: %lu", slaveSensorDataLastUpdate);
 
     // Log des valeurs pour debug
+    MASTER_LOG(LOG_LEVEL_INFO, "   Sensor values received:");
     for (int i = 1; i <= MAX_SENSORS; i++) {
         String sensorId = (i < 10) ? "s0" + String(i) : "s" + String(i);
         if (slaveSensorData.containsKey(sensorId)) {
             float value = slaveSensorData[sensorId];
-            MASTER_LOG(LOG_LEVEL_DEBUG, "  %s = %.1f%%", sensorId.c_str(), value);
+            MASTER_LOG(LOG_LEVEL_INFO, "     %s = %.1f%%", sensorId.c_str(), value);
         }
     }
+
+    // Vérifier que les données sont bien stockées
+    MASTER_LOG(LOG_LEVEL_DEBUG, "   Verifying storage - slaveSensorData.size() = %d", slaveSensorData.size());
 }
 
 // Initialize BME280 - shared I2C bus with RTC
@@ -646,8 +660,9 @@ static void parseConfiguration(String jsonResponse) {
                 int assignedSensorCount = 0;
 
                 // Utiliser directement slaveSensorData (déjà parsé)
+                // TIMEOUT: 30 seconds instead of 10 (allow time for first sensor packet)
                 bool hasSensorData = (slaveSensorDataLastUpdate > 0 &&
-                                     (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                                     (millis() - slaveSensorDataLastUpdate) < 30000); // Données récentes (< 30s)
                 DynamicJsonDocument& sensorDocUpdate = slaveSensorData; // Référence directe
 
                 // First, count how many sensors are actually assigned to this zone
@@ -675,7 +690,13 @@ static void parseConfiguration(String jsonResponse) {
                             sensorDataList += "%";
                         } else {
                             sensorDataList += SENSOR_STACK[s].id;
-                            sensorDataList += "=N/A";
+                            sensorDataList += "=";
+                            // More informative message: show status vs just "N/A"
+                            if (slaveSensorDataLastUpdate == 0) {
+                                sensorDataList += "waiting";
+                            } else {
+                                sensorDataList += "N/A";
+                            }
                         }
                         sensorCount++;
                     }
@@ -691,7 +712,11 @@ static void parseConfiguration(String jsonResponse) {
                     MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s updated with %d sensors",
                              existingSlot->id, zoneId.c_str(), assignedSensorCount);
                     MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
-                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [N/A - no recent data]");
+                    if (slaveSensorDataLastUpdate == 0) {
+                        MASTER_LOG(LOG_LEVEL_INFO, "  Values: [waiting for first sensor data...]");
+                    } else {
+                        MASTER_LOG(LOG_LEVEL_INFO, "  Values: [%s]", sensorDataList.c_str());
+                    }
                 } else {
                     MASTER_LOG(LOG_LEVEL_WARN, "Zone %d: %s updated but NO sensors assigned!",
                              existingSlot->id, zoneId.c_str());
@@ -784,8 +809,9 @@ static void parseConfiguration(String jsonResponse) {
             int assignedSensorCount = 0;
 
             // Utiliser directement slaveSensorData (déjà parsé)
+            // TIMEOUT: 30 seconds instead of 10 (allow time for first sensor packet)
             bool hasSensorData = (slaveSensorDataLastUpdate > 0 &&
-                                 (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                                 (millis() - slaveSensorDataLastUpdate) < 30000); // Données récentes (< 30s)
             DynamicJsonDocument& sensorDoc = slaveSensorData; // Référence directe
 
             // First, count how many sensors are actually assigned to this zone
@@ -813,7 +839,13 @@ static void parseConfiguration(String jsonResponse) {
                         sensorDataList += "%";
                     } else {
                         sensorDataList += SENSOR_STACK[s].id;
-                        sensorDataList += "=N/A";
+                        sensorDataList += "=";
+                        // More informative message: show status vs just "N/A"
+                        if (slaveSensorDataLastUpdate == 0) {
+                            sensorDataList += "waiting";
+                        } else {
+                            sensorDataList += "N/A";
+                        }
                     }
                     sensorCount++;
                 }
@@ -829,7 +861,11 @@ static void parseConfiguration(String jsonResponse) {
                 MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s configured with %d sensors",
                          slot->id, zoneId.c_str(), assignedSensorCount);
                 MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
-                MASTER_LOG(LOG_LEVEL_INFO, "  Values: [N/A - no recent data]");
+                if (slaveSensorDataLastUpdate == 0) {
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [waiting for first sensor data...]");
+                } else {
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [%s]", sensorDataList.c_str());
+                }
             } else {
                 MASTER_LOG(LOG_LEVEL_WARN, "Zone %d: %s configured but NO sensors assigned!",
                          slot->id, zoneId.c_str());
@@ -979,13 +1015,36 @@ static void sendSensorData() {
     // Only send zone data if zones are actually configured
     if (assignedZoneCount > 0) {
         // Utiliser directement slaveSensorData (déjà parsé)
+        // TIMEOUT: Augmenté à 60 secondes pour être plus tolérant
         bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                             (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                             (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
         DynamicJsonDocument& sensorDoc = slaveSensorData; // Référence directe
 
-        if (!hasRecentData) {
-            MASTER_LOG(LOG_LEVEL_WARN, "No recent sensor data from ESP32_sensor (last update: %lu ms ago)",
-                      slaveSensorDataLastUpdate > 0 ? (millis() - slaveSensorDataLastUpdate) : 0);
+        // DEBUG: Log détaillé pour diagnostiquer le problème N/A
+        MASTER_LOG(LOG_LEVEL_INFO, "=== SENSOR DATA DEBUG ===");
+        MASTER_LOG(LOG_LEVEL_INFO, "hasRecentData: %d (lastUpdate: %lu, age: %lu ms)",
+                  hasRecentData, slaveSensorDataLastUpdate,
+                  slaveSensorDataLastUpdate > 0 ? (millis() - slaveSensorDataLastUpdate) : 0);
+        MASTER_LOG(LOG_LEVEL_INFO, "sensorDoc size: %d", sensorDoc.size());
+
+        // Lister toutes les clés disponibles dans sensorDoc
+        String availableKeys = "";
+        for (JsonPair kv : sensorDoc.as<JsonObject>()) {
+            if (availableKeys.length() > 0) availableKeys += ", ";
+            availableKeys += "\"" + String(kv.key().c_str()) + "\"";
+        }
+        MASTER_LOG(LOG_LEVEL_INFO, "Available sensor keys: [%s]", availableKeys.c_str());
+
+        // Vérifier l'intégrité des données
+        if (sensorDoc.size() == 0 && slaveSensorDataLastUpdate > 0) {
+            MASTER_LOG(LOG_LEVEL_WARN, "WARNING: slaveSensorData is empty but lastUpdate indicates data was received!");
+        }
+
+        if (!hasRecentData && slaveSensorDataLastUpdate > 0) {
+            MASTER_LOG(LOG_LEVEL_WARN, "Sensor data is stale (last update: %lu ms ago)",
+                      (millis() - slaveSensorDataLastUpdate));
+        } else if (slaveSensorDataLastUpdate == 0) {
+            MASTER_LOG(LOG_LEVEL_DEBUG, "Waiting for first sensor data packet from ESP32_sensor...");
         } else {
             MASTER_LOG(LOG_LEVEL_DEBUG, "Using sensor data (last update: %lu ms ago)",
                       millis() - slaveSensorDataLastUpdate);
@@ -1005,16 +1064,25 @@ static void sendSensorData() {
                         JsonObject sensorObj = moistureArray.createNestedObject();
                         sensorObj["sensorId"] = SENSOR_STACK[s].id;
 
+                        // DEBUG: Log détaillé pour chaque capteur
+                        MASTER_LOG(LOG_LEVEL_DEBUG, "Processing sensor %s for zone %s (assigned=%d, zoneMatch=%d)",
+                                  SENSOR_STACK[s].id.c_str(), ZONE_STACK[i].zoneId.c_str(),
+                                  SENSOR_STACK[s].assigned, (SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId));
+
                         // Get value from ESP32_sensor data if available
-                        if (hasRecentData && sensorDoc.containsKey(SENSOR_STACK[s].id)) {
+                        bool keyExists = sensorDoc.containsKey(SENSOR_STACK[s].id);
+                        MASTER_LOG(LOG_LEVEL_DEBUG, "Sensor %s: hasRecentData=%d, keyExists=%d",
+                                  SENSOR_STACK[s].id.c_str(), hasRecentData, keyExists);
+
+                        if (hasRecentData && keyExists) {
                             float sensorValue = sensorDoc[SENSOR_STACK[s].id];
                             sensorObj["value"] = sensorValue;
-                            MASTER_LOG(LOG_LEVEL_DEBUG, "Zone %s sensor %s: %.1f%%",
-                                     ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str(), sensorValue);
+                            MASTER_LOG(LOG_LEVEL_INFO, "✅ Zone %s sensor %s: %.1f%%",
+                                      ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str(), sensorValue);
                         } else {
                             sensorObj["value"] = 50.0; // Default fallback
-                            MASTER_LOG(LOG_LEVEL_WARN, "Zone %s sensor %s: using default 50.0%% (data not available)",
-                                     ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str());
+                            MASTER_LOG(LOG_LEVEL_WARN, "❌ Zone %s sensor %s: using default 50.0%% (hasRecentData=%d, keyExists=%d)",
+                                      ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str(), hasRecentData, keyExists);
                         }
                     }
                 }
@@ -1134,7 +1202,7 @@ static void checkIrrigationSchedule() {
                     int sensorCount = 0;
                     float totalMoisture = 0;
                     bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                                         (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                         (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
                     DynamicJsonDocument& sensorDoc = slaveSensorData;
 
                     // Calculate average moisture for this zone
@@ -1182,7 +1250,7 @@ static void checkIrrigationSchedule() {
                 int sensorCount = 0;
                 float totalMoisture = 0;
                 bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                                     (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                     (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
                 DynamicJsonDocument& sensorDoc = slaveSensorData;
 
                 // Calculate average moisture for this zone
@@ -1237,7 +1305,7 @@ static void checkMoistureThresholds() {
         float totalMoisture = 0;
         int sensorCount = 0;
         bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                             (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
+                     (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
 
         for (int s = 0; s < MAX_SENSORS; s++) {
             if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
