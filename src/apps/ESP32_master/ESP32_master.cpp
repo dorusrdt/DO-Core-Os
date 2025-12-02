@@ -18,6 +18,8 @@ const char* ap_pass = "12345678";
 
 // Configuration serveur externe
 // NOTE: Port 3000 pour serveur réel (irrigation-ai-v-beta), port 8000 pour serveur de simulation
+//static const char* serverURL = "http://10.201.195.53:3000";
+//static const char* serverURL = "http://10.201.195.147:3000";
 static const char* serverURL = "http://192.168.1.72:3000";
 static const char* deviceId = "ESP32_IRRIGATION_11100454456464674";
 static const char* deviceSecret = "esp32-secure-key-2024";
@@ -31,7 +33,7 @@ static const char* deviceSecret = "esp32-secure-key-2024";
 #define MAX_SENSORS 12
 #define SENSORS_PER_ZONE 10
 
-// I2C Configuration - Shared bus with RTC (both use 21/22)
+// I2C Configuration
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 #define BME280_I2C_ADDR 0x76
@@ -73,7 +75,6 @@ struct SensorSlot {
 static WebSocketsServer* webSocket = nullptr;
 static bool app_running = false;
 
-// BME280 sensor - shared I2C bus with RTC
 static Adafruit_BME280 bmeSensor;
 static bool bme_ready = false;
 static bool bme_simulated = false;
@@ -103,6 +104,12 @@ static bool deviceAssigned = false;
 static float globalTemperature = 24.5;
 static float globalHumidity = 60.0;
 static float globalPressure = 1012.0;
+
+// Tank level data from ESP32_sensor
+static float currentTankLevel = 50.0;
+
+// Pump control state
+static String lastPumpCommand = "UNKNOWN";
 
 // Irrigation Control Variables (exactly like versio)
 static bool isIrrigating = false;
@@ -134,67 +141,20 @@ static String generateHMAC(String data);
 static String getTimestamp();
 static void updateSlaveSensorData(uint8_t slaveId, String data);
 static void parseIrrigationSchedules(ZoneSlot* zoneSlot, JsonObject zone);
+static void updatePumpControl();
 
-
-// Update sensor data from ESP32_sensor slave
-// IMPORTANT: Parse directement le JSON reçu et stocke-le dans slaveSensorData
-static void updateSlaveSensorData(uint8_t slaveId, String data) {
-    MASTER_LOG(LOG_LEVEL_INFO, "=== RECEIVING SENSOR DATA FROM SLAVE %u ===", slaveId);
-    MASTER_LOG(LOG_LEVEL_DEBUG, "Raw JSON data (%u bytes): %s", data.length(), data.c_str());
-
-    // Créer un document temporaire pour parser en sécurité
-    DynamicJsonDocument tempDoc(1024);
-    DeserializationError error = deserializeJson(tempDoc, data);
-
-    if (error) {
-        MASTER_LOG(LOG_LEVEL_ERROR, "❌ JSON parse failed from slave_%u: %s", slaveId, error.c_str());
-        return;
-    }
-
-    // Copier les données parsées dans le stockage global
-    slaveSensorData.clear();
-    for (JsonPair kv : tempDoc.as<JsonObject>()) {
-        slaveSensorData[kv.key()] = kv.value();
-    }
-
-    slaveSensorDataLastUpdate = millis();
-    MASTER_LOG(LOG_LEVEL_INFO, "✅ Sensor data parsed and stored successfully from slave_%u", slaveId);
-    MASTER_LOG(LOG_LEVEL_INFO, "   JSON size: %d keys", slaveSensorData.size());
-    MASTER_LOG(LOG_LEVEL_INFO, "   Timestamp: %lu", slaveSensorDataLastUpdate);
-
-    // Log des valeurs pour debug
-    MASTER_LOG(LOG_LEVEL_INFO, "   Sensor values received:");
-    for (int i = 1; i <= MAX_SENSORS; i++) {
-        String sensorId = (i < 10) ? "s0" + String(i) : "s" + String(i);
-        if (slaveSensorData.containsKey(sensorId)) {
-            float value = slaveSensorData[sensorId];
-            MASTER_LOG(LOG_LEVEL_INFO, "     %s = %.1f%%", sensorId.c_str(), value);
-        }
-    }
-
-    // Vérifier que les données sont bien stockées
-    MASTER_LOG(LOG_LEVEL_DEBUG, "   Verifying storage - slaveSensorData.size() = %d", slaveSensorData.size());
-}
-
-// Initialize BME280 - shared I2C bus with RTC
+// Initialize BME280
 static bool init_bme280() {
-    // Note: Wire is already initialized by RTC manager, just configure BME280
-    MASTER_LOG(LOG_LEVEL_INFO, "Initializing BME280 on shared I2C bus SDA=%d SCL=%d addr=0x%02X",
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    MASTER_LOG(LOG_LEVEL_INFO, "Initializing BME280 on SDA=%d SCL=%d addr=0x%02X",
                I2C_SDA_PIN, I2C_SCL_PIN, BME280_I2C_ADDR);
 
-    delay(100); // Allow sensor to stabilize
-
     if (!bmeSensor.begin(BME280_I2C_ADDR)) {
-        MASTER_LOG(LOG_LEVEL_WARN, "BME280 not found on shared I2C bus, will use simulated data");
+        MASTER_LOG(LOG_LEVEL_WARN, "BME280 not detected. Will simulate values.");
         bme_simulated = true;
-        bme_data.temperature_c = globalTemperature;
-        bme_data.humidity_pct = globalHumidity;
-        bme_data.pressure_hpa = globalPressure;
-        bme_data.last_sample_ms = millis();
         return false;
     }
 
-    // Configure sensor sampling
     bmeSensor.setSampling(
         Adafruit_BME280::MODE_NORMAL,
         Adafruit_BME280::SAMPLING_X2,   // temperature
@@ -204,23 +164,12 @@ static bool init_bme280() {
         Adafruit_BME280::STANDBY_MS_500
     );
 
-    MASTER_LOG(LOG_LEVEL_INFO, "BME280 ready on shared I2C bus");
+    MASTER_LOG(LOG_LEVEL_INFO, "BME280 ready");
     bme_simulated = false;
-    bme_ready = true;
-
-    // Take initial reading
-    bme_data.temperature_c = bmeSensor.readTemperature();
-    bme_data.pressure_hpa = bmeSensor.readPressure() / 100.0F;
-    bme_data.humidity_pct = bmeSensor.readHumidity();
-    bme_data.last_sample_ms = millis();
-
-    MASTER_LOG(LOG_LEVEL_INFO, "BME280 initial readings - T=%.2f°C H=%.2f%% P=%.2fhPa",
-               bme_data.temperature_c, bme_data.humidity_pct, bme_data.pressure_hpa);
-
     return true;
 }
 
-// Refresh BME280 data with detailed logging
+// Refresh BME280 or simulate
 static void refresh_bme280() {
     const unsigned long now = millis();
     if ((now - bme_data.last_sample_ms) < 5000) {
@@ -228,38 +177,21 @@ static void refresh_bme280() {
     }
 
     if (bme_ready && !bme_simulated) {
-        // Read sensor data
-        float temp = bmeSensor.readTemperature();
-        float pressure = bmeSensor.readPressure() / 100.0F;
-        float humidity = bmeSensor.readHumidity();
-
-        // Update data structure
-        bme_data.temperature_c = temp;
-        bme_data.pressure_hpa = pressure;
-        bme_data.humidity_pct = humidity;
-
-        // Detailed logging for each acquisition
-        MASTER_LOG(LOG_LEVEL_INFO, "🌡️  BME280 Data Acquisition - Temperature: %.2f°C | Humidity: %.2f%% | Pressure: %.2fhPa",
-                   temp, humidity, pressure);
-
-        // Check for unusual values
-        if (temp < 0 || temp > 50) {
-            MASTER_LOG(LOG_LEVEL_WARN, "Unusual temperature reading: %.2f°C", temp);
-        }
-        if (humidity < 0 || humidity > 100) {
-            MASTER_LOG(LOG_LEVEL_WARN, "Unusual humidity reading: %.2f%%", humidity);
-        }
-        if (pressure < 900 || pressure > 1100) {
-            MASTER_LOG(LOG_LEVEL_WARN, "Unusual pressure reading: %.2fhPa", pressure);
-        }
+        bme_data.temperature_c = bmeSensor.readTemperature();
+        bme_data.humidity_pct = bmeSensor.readHumidity();
+        bme_data.pressure_hpa = bmeSensor.readPressure() / 100.0F;
     } else {
-        // Simulate readings
         simulate_bme280();
-        MASTER_LOG(LOG_LEVEL_INFO, "🔄 BME280 Simulated Data - Temperature: %.2f°C | Humidity: %.2f%% | Pressure: %.2fhPa",
-                   bme_data.temperature_c, bme_data.humidity_pct, bme_data.pressure_hpa);
     }
 
     bme_data.last_sample_ms = now;
+
+    MASTER_LOG(LOG_LEVEL_DEBUG,
+               "BME280 sample T=%.2f°C H=%.2f%% P=%.2fhPa %s",
+               bme_data.temperature_c,
+               bme_data.humidity_pct,
+               bme_data.pressure_hpa,
+               bme_simulated ? "(simulated)" : "");
 }
 
 // Simulate BME280 values (exactly like versio logic)
@@ -275,6 +207,75 @@ static void simulate_bme280() {
     bme_data.temperature_c = globalTemperature;
     bme_data.humidity_pct = globalHumidity;
     bme_data.pressure_hpa = globalPressure;
+}
+
+// Update sensor data from ESP32_sensor slave
+// IMPORTANT: Parse directement le JSON reçu et stocke-le dans slaveSensorData
+static void updateSlaveSensorData(uint8_t slaveId, String data) {
+    // Parser directement le JSON reçu dans slaveSensorData
+    DeserializationError error = deserializeJson(slaveSensorData, data);
+
+    if (error) {
+        MASTER_LOG(LOG_LEVEL_WARN, "Failed to parse sensor data from slave_%u: %s", slaveId, error.c_str());
+        MASTER_LOG(LOG_LEVEL_DEBUG, "Raw data: %s", data.c_str());
+        return;
+    }
+
+    slaveSensorDataLastUpdate = millis();
+    MASTER_LOG(LOG_LEVEL_INFO, "Received sensor data from slave_%u | bytes=%u", slaveId, data.length());
+    MASTER_LOG(LOG_LEVEL_DEBUG, "Sensor data parsed successfully, sensors: %d", slaveSensorData.size());
+
+    // Log des valeurs pour debug
+    for (int i = 1; i <= MAX_SENSORS; i++) {
+        String sensorId = (i < 10) ? "s0" + String(i) : "s" + String(i);
+        if (slaveSensorData.containsKey(sensorId)) {
+            float value = slaveSensorData[sensorId];
+            MASTER_LOG(LOG_LEVEL_DEBUG, "  %s = %.1f%%", sensorId.c_str(), value);
+        }
+    }
+
+    // NEW: Extract tank level data
+    if (slaveSensorData.containsKey("tankLevel")) {
+        currentTankLevel = slaveSensorData["tankLevel"];
+        MASTER_LOG(LOG_LEVEL_DEBUG, "Tank level: %.1f cm", currentTankLevel);
+    }
+}
+
+// NEW: Independent pump control based on tank level
+static void updatePumpControl() {
+    // Tank level thresholds (cm from sensor to water surface)
+    // Sensor assumed at top: large distance = empty tank
+    const float TANK_EMPTY_CM = 35.0;  // Tank is empty - start pump
+    const float TANK_FULL_CM = 5.0;   // Tank is full - stop pump
+
+    // Default: maintain current state (hysteresis)
+    String newPumpCommand = lastPumpCommand;
+    if (lastPumpCommand == "UNKNOWN") {
+        newPumpCommand = "OFF"; // Initial state
+    }
+
+    // Override only when crossing thresholds
+    if (currentTankLevel >= TANK_EMPTY_CM) {
+        newPumpCommand = "ON";
+    } else if (currentTankLevel <= TANK_FULL_CM) {
+        newPumpCommand = "OFF";
+    }
+    // Between 5-35 cm: maintains current state (hysteresis zone)
+
+    // Send command only if state changed
+    if (newPumpCommand != lastPumpCommand) {
+        DynamicJsonDocument pumpCmd(256);
+        pumpCmd["action"] = "pump_control";
+        pumpCmd["pumpState"] = newPumpCommand;
+
+        String cmdStr;
+        serializeJson(pumpCmd, cmdStr);
+        webSocket->broadcastTXT(cmdStr);
+
+        MASTER_LOG(LOG_LEVEL_INFO, "Pump command: %s (tank level: %.1f cm)",
+                  newPumpCommand.c_str(), currentTankLevel);
+        lastPumpCommand = newPumpCommand;
+    }
 }
 
 // Generate HMAC signature (exactly like versio - simplified for now)
@@ -355,15 +356,15 @@ static void registerDevice() {
         httpResponseCode = http.POST(payload);
         MASTER_LOG(LOG_LEVEL_DEBUG, "Response code: %d", httpResponseCode);
 
-        if (httpResponseCode > 0) {
-            String response = http.getString();
+    if (httpResponseCode > 0) {
+        String response = http.getString();
             MASTER_LOG(LOG_LEVEL_DEBUG, "Response: %s", response.c_str());
 
             if (httpResponseCode == 200 || httpResponseCode == 201) {
                 MASTER_LOG(LOG_LEVEL_INFO, "Device registered successfully");
                 deviceRegistered = true;
                 break;
-            } else {
+    } else {
                 MASTER_LOG(LOG_LEVEL_ERROR, "Registration failed with code: %d", httpResponseCode);
                 deviceRegistered = false;
             }
@@ -660,9 +661,8 @@ static void parseConfiguration(String jsonResponse) {
                 int assignedSensorCount = 0;
 
                 // Utiliser directement slaveSensorData (déjà parsé)
-                // TIMEOUT: 30 seconds instead of 10 (allow time for first sensor packet)
                 bool hasSensorData = (slaveSensorDataLastUpdate > 0 &&
-                                     (millis() - slaveSensorDataLastUpdate) < 30000); // Données récentes (< 30s)
+                                     (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
                 DynamicJsonDocument& sensorDocUpdate = slaveSensorData; // Référence directe
 
                 // First, count how many sensors are actually assigned to this zone
@@ -690,13 +690,7 @@ static void parseConfiguration(String jsonResponse) {
                             sensorDataList += "%";
                         } else {
                             sensorDataList += SENSOR_STACK[s].id;
-                            sensorDataList += "=";
-                            // More informative message: show status vs just "N/A"
-                            if (slaveSensorDataLastUpdate == 0) {
-                                sensorDataList += "waiting";
-                            } else {
-                                sensorDataList += "N/A";
-                            }
+                            sensorDataList += "=N/A";
                         }
                         sensorCount++;
                     }
@@ -712,11 +706,7 @@ static void parseConfiguration(String jsonResponse) {
                     MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s updated with %d sensors",
                              existingSlot->id, zoneId.c_str(), assignedSensorCount);
                     MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
-                    if (slaveSensorDataLastUpdate == 0) {
-                        MASTER_LOG(LOG_LEVEL_INFO, "  Values: [waiting for first sensor data...]");
-                    } else {
-                        MASTER_LOG(LOG_LEVEL_INFO, "  Values: [%s]", sensorDataList.c_str());
-                    }
+                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [N/A - no recent data]");
                 } else {
                     MASTER_LOG(LOG_LEVEL_WARN, "Zone %d: %s updated but NO sensors assigned!",
                              existingSlot->id, zoneId.c_str());
@@ -809,9 +799,8 @@ static void parseConfiguration(String jsonResponse) {
             int assignedSensorCount = 0;
 
             // Utiliser directement slaveSensorData (déjà parsé)
-            // TIMEOUT: 30 seconds instead of 10 (allow time for first sensor packet)
             bool hasSensorData = (slaveSensorDataLastUpdate > 0 &&
-                                 (millis() - slaveSensorDataLastUpdate) < 30000); // Données récentes (< 30s)
+                                 (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
             DynamicJsonDocument& sensorDoc = slaveSensorData; // Référence directe
 
             // First, count how many sensors are actually assigned to this zone
@@ -839,13 +828,7 @@ static void parseConfiguration(String jsonResponse) {
                         sensorDataList += "%";
                     } else {
                         sensorDataList += SENSOR_STACK[s].id;
-                        sensorDataList += "=";
-                        // More informative message: show status vs just "N/A"
-                        if (slaveSensorDataLastUpdate == 0) {
-                            sensorDataList += "waiting";
-                        } else {
-                            sensorDataList += "N/A";
-                        }
+                        sensorDataList += "=N/A";
                     }
                     sensorCount++;
                 }
@@ -861,11 +844,7 @@ static void parseConfiguration(String jsonResponse) {
                 MASTER_LOG(LOG_LEVEL_INFO, "Zone %d: %s configured with %d sensors",
                          slot->id, zoneId.c_str(), assignedSensorCount);
                 MASTER_LOG(LOG_LEVEL_INFO, "  Sensors: [%s]", sensorList.c_str());
-                if (slaveSensorDataLastUpdate == 0) {
-                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [waiting for first sensor data...]");
-                } else {
-                    MASTER_LOG(LOG_LEVEL_INFO, "  Values: [%s]", sensorDataList.c_str());
-                }
+                MASTER_LOG(LOG_LEVEL_INFO, "  Values: [N/A - no recent data]");
             } else {
                 MASTER_LOG(LOG_LEVEL_WARN, "Zone %d: %s configured but NO sensors assigned!",
                          slot->id, zoneId.c_str());
@@ -886,10 +865,26 @@ static void handleZoneDeletion(String zoneId) {
         MASTER_LOG(LOG_LEVEL_WARN, "Stopping active irrigation for zone deletion");
         activeIrrigationTimer = 0;
         isIrrigating = false;
+
+        // Find physical zone number for the stop command
+        int physicalZoneNumber = 0;
+        for (int i = 0; i < MAX_ZONES; i++) {
+            if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
+                physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
+                break;
+            }
+        }
+
         activeZoneId = "";
-        // Send stop command to ESP32_com via WebSocket
+        // Send stop command to ESP32_com via WebSocket with physical zone number
         if (webSocket) {
-            String stopCmd = "{\"action\":\"stop_irrigation\",\"zoneId\":\"" + zoneId + "\"}";
+            DynamicJsonDocument stopDoc(256);
+            stopDoc["action"] = "stop_irrigation";
+            stopDoc["zoneId"] = zoneId;
+            stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+            String stopCmd;
+            serializeJson(stopDoc, stopCmd);
             webSocket->broadcastTXT(stopCmd);
         }
     }
@@ -978,23 +973,17 @@ static void sendSensorData() {
         return;
     }
 
-    // Global environmental data from BME280
+    // Global environmental data (exactly like versio)
     JsonObject globalData = doc.createNestedObject("globalData");
     if (!globalData.isNull()) {
         if (bme_ready || bme_simulated) {
             globalData["temperature"] = bme_data.temperature_c;
             globalData["humidity"] = bme_data.humidity_pct;
             globalData["pressure"] = bme_data.pressure_hpa;
-
-            MASTER_LOG(LOG_LEVEL_DEBUG, "Sending BME280 data to server - T=%.2f°C H=%.2f%% P=%.2fhPa",
-                       bme_data.temperature_c, bme_data.humidity_pct, bme_data.pressure_hpa);
         } else {
-            // Fallback to simulated values
             globalData["temperature"] = globalTemperature;
             globalData["humidity"] = globalHumidity;
             globalData["pressure"] = globalPressure;
-
-            MASTER_LOG(LOG_LEVEL_WARN, "Using fallback environmental data (BME280 not ready)");
         }
         globalData["batteryLevel"] = 85.0 + random(-10, 16);
         globalData["signalStrength"] = WiFi.RSSI();
@@ -1015,36 +1004,13 @@ static void sendSensorData() {
     // Only send zone data if zones are actually configured
     if (assignedZoneCount > 0) {
         // Utiliser directement slaveSensorData (déjà parsé)
-        // TIMEOUT: Augmenté à 60 secondes pour être plus tolérant
         bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                             (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
+                             (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
         DynamicJsonDocument& sensorDoc = slaveSensorData; // Référence directe
 
-        // DEBUG: Log détaillé pour diagnostiquer le problème N/A
-        MASTER_LOG(LOG_LEVEL_INFO, "=== SENSOR DATA DEBUG ===");
-        MASTER_LOG(LOG_LEVEL_INFO, "hasRecentData: %d (lastUpdate: %lu, age: %lu ms)",
-                  hasRecentData, slaveSensorDataLastUpdate,
-                  slaveSensorDataLastUpdate > 0 ? (millis() - slaveSensorDataLastUpdate) : 0);
-        MASTER_LOG(LOG_LEVEL_INFO, "sensorDoc size: %d", sensorDoc.size());
-
-        // Lister toutes les clés disponibles dans sensorDoc
-        String availableKeys = "";
-        for (JsonPair kv : sensorDoc.as<JsonObject>()) {
-            if (availableKeys.length() > 0) availableKeys += ", ";
-            availableKeys += "\"" + String(kv.key().c_str()) + "\"";
-        }
-        MASTER_LOG(LOG_LEVEL_INFO, "Available sensor keys: [%s]", availableKeys.c_str());
-
-        // Vérifier l'intégrité des données
-        if (sensorDoc.size() == 0 && slaveSensorDataLastUpdate > 0) {
-            MASTER_LOG(LOG_LEVEL_WARN, "WARNING: slaveSensorData is empty but lastUpdate indicates data was received!");
-        }
-
-        if (!hasRecentData && slaveSensorDataLastUpdate > 0) {
-            MASTER_LOG(LOG_LEVEL_WARN, "Sensor data is stale (last update: %lu ms ago)",
-                      (millis() - slaveSensorDataLastUpdate));
-        } else if (slaveSensorDataLastUpdate == 0) {
-            MASTER_LOG(LOG_LEVEL_DEBUG, "Waiting for first sensor data packet from ESP32_sensor...");
+        if (!hasRecentData) {
+            MASTER_LOG(LOG_LEVEL_WARN, "No recent sensor data from ESP32_sensor (last update: %lu ms ago)",
+                      slaveSensorDataLastUpdate > 0 ? (millis() - slaveSensorDataLastUpdate) : 0);
         } else {
             MASTER_LOG(LOG_LEVEL_DEBUG, "Using sensor data (last update: %lu ms ago)",
                       millis() - slaveSensorDataLastUpdate);
@@ -1064,25 +1030,16 @@ static void sendSensorData() {
                         JsonObject sensorObj = moistureArray.createNestedObject();
                         sensorObj["sensorId"] = SENSOR_STACK[s].id;
 
-                        // DEBUG: Log détaillé pour chaque capteur
-                        MASTER_LOG(LOG_LEVEL_DEBUG, "Processing sensor %s for zone %s (assigned=%d, zoneMatch=%d)",
-                                  SENSOR_STACK[s].id.c_str(), ZONE_STACK[i].zoneId.c_str(),
-                                  SENSOR_STACK[s].assigned, (SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId));
-
                         // Get value from ESP32_sensor data if available
-                        bool keyExists = sensorDoc.containsKey(SENSOR_STACK[s].id);
-                        MASTER_LOG(LOG_LEVEL_DEBUG, "Sensor %s: hasRecentData=%d, keyExists=%d",
-                                  SENSOR_STACK[s].id.c_str(), hasRecentData, keyExists);
-
-                        if (hasRecentData && keyExists) {
+                        if (hasRecentData && sensorDoc.containsKey(SENSOR_STACK[s].id)) {
                             float sensorValue = sensorDoc[SENSOR_STACK[s].id];
                             sensorObj["value"] = sensorValue;
-                            MASTER_LOG(LOG_LEVEL_INFO, "✅ Zone %s sensor %s: %.1f%%",
-                                      ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str(), sensorValue);
+                            MASTER_LOG(LOG_LEVEL_DEBUG, "Zone %s sensor %s: %.1f%%",
+                                     ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str(), sensorValue);
                         } else {
                             sensorObj["value"] = 50.0; // Default fallback
-                            MASTER_LOG(LOG_LEVEL_WARN, "❌ Zone %s sensor %s: using default 50.0%% (hasRecentData=%d, keyExists=%d)",
-                                      ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str(), hasRecentData, keyExists);
+                            MASTER_LOG(LOG_LEVEL_WARN, "Zone %s sensor %s: using default 50.0%% (data not available)",
+                                     ZONE_STACK[i].zoneId.c_str(), SENSOR_STACK[s].id.c_str());
                         }
                     }
                 }
@@ -1202,7 +1159,7 @@ static void checkIrrigationSchedule() {
                     int sensorCount = 0;
                     float totalMoisture = 0;
                     bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                         (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
+                                         (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
                     DynamicJsonDocument& sensorDoc = slaveSensorData;
 
                     // Calculate average moisture for this zone
@@ -1250,7 +1207,7 @@ static void checkIrrigationSchedule() {
                 int sensorCount = 0;
                 float totalMoisture = 0;
                 bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                     (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
+                                     (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
                 DynamicJsonDocument& sensorDoc = slaveSensorData;
 
                 // Calculate average moisture for this zone
@@ -1305,7 +1262,7 @@ static void checkMoistureThresholds() {
         float totalMoisture = 0;
         int sensorCount = 0;
         bool hasRecentData = (slaveSensorDataLastUpdate > 0 &&
-                     (millis() - slaveSensorDataLastUpdate) < 60000); // Données récentes (< 60s)
+                             (millis() - slaveSensorDataLastUpdate) < 10000); // Données récentes (< 10s)
 
         for (int s = 0; s < MAX_SENSORS; s++) {
             if (SENSOR_STACK[s].assigned && SENSOR_STACK[s].zoneId == ZONE_STACK[i].zoneId) {
@@ -1383,9 +1340,24 @@ static void checkIrrigationTimer() {
 
             MASTER_LOG(LOG_LEVEL_INFO, "✅ Irrigation completed for zone %s", zoneId.c_str());
 
-            // Send stop command to ESP32_com
+            // Send stop command to ESP32_com with physical zone number
             if (webSocket) {
-                String stopCmd = "{\"action\":\"stop_irrigation\",\"zoneId\":\"" + zoneId + "\"}";
+                // Find physical zone number
+                int physicalZoneNumber = 0;
+                for (int i = 0; i < MAX_ZONES; i++) {
+                    if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
+                        physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
+                        break;
+                    }
+                }
+
+                DynamicJsonDocument stopDoc(256);
+                stopDoc["action"] = "stop_irrigation";
+                stopDoc["zoneId"] = zoneId;
+                stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+                String stopCmd;
+                serializeJson(stopDoc, stopCmd);
                 webSocket->broadcastTXT(stopCmd);
             }
         } else {
@@ -1416,7 +1388,7 @@ static void checkIrrigationTimer() {
     }
 }
 
-// Execute irrigation (exactly like versio logic)
+// Execute irrigation - NOW SUPPORTS MULTIPLE ZONES SIMULTANEOUSLY
 static void executeIrrigation(String zoneId, int durationSeconds) {
     // Find the zone slot
     ZoneSlot* zoneSlot = nullptr;
@@ -1432,10 +1404,9 @@ static void executeIrrigation(String zoneId, int durationSeconds) {
         return;
     }
 
-    if (isIrrigating) {
-        MASTER_LOG(LOG_LEVEL_WARN, "Irrigation already in progress, queuing command");
-        return;
-    }
+    // CHANGED: NOW allows multiple zones to irrigate simultaneously
+    // NOTE: We removed the "if (isIrrigating)" check that was preventing parallel irrigation
+    // Each zone can now run its own irrigation independently
 
     // Calculate time breakdown for display
     unsigned long minutes = durationSeconds / 60;
@@ -1449,9 +1420,12 @@ static void executeIrrigation(String zoneId, int durationSeconds) {
                  zoneId.c_str(), zoneSlot->physicalZoneNumber, seconds);
     }
 
-    isIrrigating = true;
-    activeZoneId = zoneId;
-    activeIrrigationTimer = millis() + (durationSeconds * 1000);
+    // Update global state for this zone (will track first zone for compatibility)
+    if (!isIrrigating) {
+        isIrrigating = true;
+        activeZoneId = zoneId;
+        activeIrrigationTimer = millis() + (durationSeconds * 1000);
+    }
 
     // Display initial remaining time
     MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation started - Zone: %s | Time remaining: %lu min %lu sec",
@@ -1483,6 +1457,11 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
             IPAddress ip = webSocket->remoteIP(num);
             MASTER_LOG(LOG_LEVEL_INFO, "WebSocket client #%u connected from %d.%d.%d.%d",
                       num, ip[0], ip[1], ip[2], ip[3]);
+
+            // Send acknowledgment to client (works regardless of registration status)
+            String ackMessage = "{\"type\":\"ack\",\"client\":" + String(num) + ",\"status\":\"connected\"}";
+            webSocket->sendTXT(num, ackMessage);
+            MASTER_LOG(LOG_LEVEL_DEBUG, "Sent acknowledgment to client #%u", num);
             break;
         }
         case WStype_TEXT: {
@@ -1492,6 +1471,11 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
             // Check if this is sensor data from ESP32_sensor (client 0 typically)
             if (num == 0) {
                 updateSlaveSensorData(num, clientMessage);
+
+                // Send acknowledgment back to sensor (confirms data received)
+                String ackMessage = "{\"type\":\"sensor_ack\",\"status\":\"received\",\"timestamp\":" + String(millis()) + "}";
+                webSocket->sendTXT(num, ackMessage);
+                MASTER_LOG(LOG_LEVEL_DEBUG, "Sent sensor data acknowledgment to client #%u", num);
             }
             break;
         }
@@ -1550,6 +1534,10 @@ static void ESP32_master_app_start(void) {
     }
 
     // === AP Mode pour les clients (ESP32_sensor et ESP32_com) ===
+    // CRITICAL: Configure WiFi mode explicitly for both Station (client to external server) and AP (server for slaves)
+    WiFi.mode(WIFI_AP_STA);
+    MASTER_LOG(LOG_LEVEL_INFO, "WiFi mode set to AP_STA (Access Point + Station)");
+
     if (WiFi.softAP(ap_ssid, ap_pass)) {
         MASTER_LOG(LOG_LEVEL_INFO, "AP started: %s", ap_ssid);
         MASTER_LOG(LOG_LEVEL_INFO, "AP IP: %s", WiFi.softAPIP().toString().c_str());
@@ -1558,7 +1546,7 @@ static void ESP32_master_app_start(void) {
         return;
     }
 
-    // Initialize BME280 on shared I2C bus with RTC
+    // Initialize BME280
     bme_ready = init_bme280();
     if (!bme_ready) {
         // Initialize simulated values
@@ -1577,6 +1565,7 @@ static void ESP32_master_app_start(void) {
 
     webSocket->begin();
     webSocket->onEvent(onWebSocketEvent);
+    webSocket->enableHeartbeat(30000, 10000, 3); // Ping every 30s, timeout 10s, 3 retries
 
     MASTER_LOG(LOG_LEVEL_INFO, "WebSocket server started on port 81");
     MASTER_LOG(LOG_LEVEL_DEBUG, "Ready to accept ESP32_sensor & ESP32_com clients");
@@ -1600,7 +1589,22 @@ static void ESP32_master_app_stop(void) {
     // Stop any active irrigation
     if (isIrrigating) {
         if (webSocket) {
-            String stopCmd = "{\"action\":\"stop_irrigation\",\"zoneId\":\"" + activeZoneId + "\"}";
+            // Find physical zone number
+            int physicalZoneNumber = 0;
+            for (int i = 0; i < MAX_ZONES; i++) {
+                if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == activeZoneId) {
+                    physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
+                    break;
+                }
+            }
+
+            DynamicJsonDocument stopDoc(256);
+            stopDoc["action"] = "stop_irrigation";
+            stopDoc["zoneId"] = activeZoneId;
+            stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+            String stopCmd;
+            serializeJson(stopDoc, stopCmd);
             webSocket->broadcastTXT(stopCmd);
         }
         isIrrigating = false;
@@ -1629,7 +1633,7 @@ static void ESP32_master_app_loop(void) {
 
     unsigned long currentTime = millis();
 
-    // Refresh BME280 data with detailed logging
+    // Refresh BME280 data
     refresh_bme280();
 
     // Check irrigation timer
@@ -1647,8 +1651,8 @@ static void ESP32_master_app_loop(void) {
         lastDataSend = currentTime;
     }
 
-    // Check irrigation schedule every minute (exactly like versio)
-    if (currentTime % 60000 < 1000) {
+    // Check irrigation schedule every 10 seconds
+    if (currentTime % 10000 < 1000) {
         checkIrrigationSchedule();
     }
 
@@ -1656,6 +1660,9 @@ static void ESP32_master_app_loop(void) {
     if (currentTime % 30000 < 1000) {
         checkMoistureThresholds();
     }
+
+    // NEW: Update pump control based on tank level (independent of irrigation)
+    updatePumpControl();
 
     // Re-register if WiFi reconnected and not registered
     if (WiFi.status() == WL_CONNECTED && !deviceRegistered) {
@@ -1680,7 +1687,7 @@ SysError_t ESP32_master_register_app() {
 
     uint8_t app_id;
     SysError_t result = app_register("ESP32_master", "Irrigation Master Application",
-                                    APP_TYPE_USER, &callbacks, &app_id);
+                       APP_TYPE_USER, &callbacks, &app_id);
     if (result == SYS_OK) {
         esp32_master_real_app_id = app_id;
     }

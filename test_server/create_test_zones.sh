@@ -60,7 +60,7 @@ if [ "$ZONE_COUNT" -ge 1 ]; then
       "physicalZoneNumber": 1,
       "waterPerDay": 2000,
       "irrigationTime": "08:00",
-      "humidityThreshold": 70,
+      "humidityThreshold": 200,
       "sensors": [
         {"sensorId": "s01"},
         {"sensorId": "s02"},
@@ -68,13 +68,13 @@ if [ "$ZONE_COUNT" -ge 1 ]; then
       ],
       "irrigationSchedule": [
         {
-          "time": "08:00",
+          "time": "03:51",
           "duration": 15,
           "daysOfWeek": [1, 3, 5],
           "isActive": true
         },
         {
-          "time": "03:39",
+          "time": "03:53",
           "duration": 20,
           "daysOfWeek": [0, 2, 4, 6],
           "isActive": true
@@ -94,7 +94,7 @@ if [ "$ZONE_COUNT" -ge 2 ]; then
       "physicalZoneNumber": 2,
       "waterPerDay": 3000,
       "irrigationTime": "18:00",
-      "humidityThreshold": 70,
+      "humidityThreshold": 200,
       "sensors": [
         {"sensorId": "s04"},
         {"sensorId": "s05"},
@@ -108,7 +108,7 @@ if [ "$ZONE_COUNT" -ge 2 ]; then
           "isActive": true
         },
         {
-          "time": "20:00",
+          "time": "05:10",
           "duration": 15,
           "daysOfWeek": [0, 6],
           "isActive": true
@@ -128,7 +128,7 @@ if [ "$ZONE_COUNT" -ge 3 ]; then
       "physicalZoneNumber": 3,
       "waterPerDay": 1500,
       "irrigationTime": "12:00",
-      "humidityThreshold": 75,
+      "humidityThreshold": 200,
       "sensors": [
         {"sensorId": "s07"},
         {"sensorId": "s08"},
@@ -136,9 +136,9 @@ if [ "$ZONE_COUNT" -ge 3 ]; then
       ],
       "irrigationSchedule": [
         {
-          "time": "10:00",
+          "time": "05:10",
           "duration": 10,
-          "daysOfWeek": [1, 3, 5],
+          "daysOfWeek": [0, 3, 5],
           "isActive": true
         }
       ]

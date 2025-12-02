@@ -32,14 +32,30 @@ static const int zoneRelayPins[MAX_ZONES] = {
 static WebSocketsClient* webSocket = nullptr;
 static bool app_running = false;
 
-// Irrigation control state
-static bool isIrrigating = false;
-static int activeZoneNumber = 0; // 1-4, 0 = none
-static unsigned long irrigationEndTime = 0;
+// Irrigation control state - NOW SUPPORTS MULTIPLE ZONES SIMULTANEOUSLY
+// Structure pour tracker l'irrigation de chaque zone indépendamment
+struct ZoneIrrigationState {
+    bool isActive;                      // Zone is currently irrigating
+    unsigned long endTime;              // When this zone's irrigation ends (ms)
+    int durationSeconds;                // Original duration for display
+    String zoneId;                      // Zone ID from master
+};
 
-// Forward declarations
-static void startIrrigation(int zoneNumber, int durationSeconds);
-static void stopIrrigation();
+static ZoneIrrigationState zoneStates[MAX_ZONES] = {
+    {false, 0, 0, ""},
+    {false, 0, 0, ""},
+    {false, 0, 0, ""},
+    {false, 0, 0, ""}
+};
+
+// Legacy variable for backward compatibility (can be removed later)
+static bool isIrrigating = false;
+static int activeZoneNumber = 0; // 1-4, 0 = none (for logging purposes)
+static unsigned long irrigationEndTime = 0; // For logging purposes
+
+// Forward declarations (default parameters go HERE)
+static void startIrrigation(int zoneNumber, int durationSeconds, const String& zoneId = "");
+static void stopIrrigation(int zoneNumber = 0);
 static void checkIrrigationTimer();
 
 // Gestionnaire d'événements WebSocket
@@ -66,6 +82,12 @@ static void onWebSocketEvent_com(WStype_t type, uint8_t * payload, size_t length
                 break;
             }
 
+            // Ignore messages that are not commands (e.g., acknowledgments)
+            if (!doc.containsKey("action")) {
+                COM_LOG(LOG_LEVEL_DEBUG, "Ignoring non-command message from master");
+                break;
+            }
+
             String action = doc["action"].as<String>();
 
             if (action == "start_irrigation") {
@@ -87,20 +109,54 @@ static void onWebSocketEvent_com(WStype_t type, uint8_t * payload, size_t length
                     COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu sec", seconds);
                 }
 
-                startIrrigation(physicalZoneNumber, durationSeconds);
+                // NOW: Pass zoneId to startIrrigation for tracking
+                startIrrigation(physicalZoneNumber, durationSeconds, zoneId);
 
             } else if (action == "stop_irrigation") {
                 String zoneId = doc["zoneId"].as<String>();
+                int physicalZoneNumber = doc["physicalZoneNumber"] | 0;  // 0 means stop all
 
                 COM_LOG(LOG_LEVEL_INFO, "📥 Received STOP irrigation command:");
                 COM_LOG(LOG_LEVEL_INFO, "   Zone ID: %s", zoneId.c_str());
-                if (isIrrigating && activeZoneNumber > 0) {
-                    COM_LOG(LOG_LEVEL_INFO, "   Currently irrigating Zone %d - stopping now", activeZoneNumber);
+
+                // Log current irrigation status
+                if (physicalZoneNumber > 0) {
+                    if (physicalZoneNumber >= 1 && physicalZoneNumber <= MAX_ZONES) {
+                        int zoneIdx = physicalZoneNumber - 1;
+                        if (zoneStates[zoneIdx].isActive) {
+                            COM_LOG(LOG_LEVEL_INFO, "   Zone %d is active - stopping now", physicalZoneNumber);
+                        } else {
+                            COM_LOG(LOG_LEVEL_INFO, "   Zone %d is not active", physicalZoneNumber);
+                        }
+                    }
                 } else {
-                    COM_LOG(LOG_LEVEL_INFO, "   No active irrigation to stop");
+                    // Count active zones
+                    int activeCount = 0;
+                    for (int i = 0; i < MAX_ZONES; i++) {
+                        if (zoneStates[i].isActive) activeCount++;
+                    }
+                    COM_LOG(LOG_LEVEL_INFO, "   Stopping all zones (%d currently active)", activeCount);
                 }
 
-                stopIrrigation();
+                // NOW: Support stopping specific zone or all zones
+                stopIrrigation(physicalZoneNumber);
+            } else if (action == "pump_control") {
+                // NEW: Handle pump control commands
+                String pumpState = doc["pumpState"].as<String>();
+
+                COM_LOG(LOG_LEVEL_INFO, "📥 Received PUMP CONTROL command:");
+                COM_LOG(LOG_LEVEL_INFO, "   Pump State: %s", pumpState.c_str());
+
+                // Control pump relay (active LOW)
+                if (pumpState == "ON") {
+                    digitalWrite(PUMP_RELAY_PIN, LOW);
+                    COM_LOG(LOG_LEVEL_INFO, "   ✅ Pump: ON (GPIO %d = LOW)", PUMP_RELAY_PIN);
+                } else if (pumpState == "OFF") {
+                    digitalWrite(PUMP_RELAY_PIN, HIGH);
+                    COM_LOG(LOG_LEVEL_INFO, "   ✅ Pump: OFF (GPIO %d = HIGH)", PUMP_RELAY_PIN);
+                } else {
+                    COM_LOG(LOG_LEVEL_WARN, "   ⚠️  Unknown pump state: %s", pumpState.c_str());
+                }
             } else {
                 COM_LOG(LOG_LEVEL_WARN, "⚠️  Unknown action received: %s", action.c_str());
             }
@@ -117,27 +173,20 @@ static void onWebSocketEvent_com(WStype_t type, uint8_t * payload, size_t length
     }
 }
 
-// Start irrigation (exactly like versio logic - active LOW)
-static void startIrrigation(int zoneNumber, int durationSeconds) {
+// Start irrigation - NOW SUPPORTS MULTIPLE ZONES SIMULTANEOUSLY (active LOW)
+static void startIrrigation(int zoneNumber, int durationSeconds, const String& zoneId) {
     // Validate zone number
     if (zoneNumber < 1 || zoneNumber > MAX_ZONES) {
         COM_LOG(LOG_LEVEL_ERROR, "Invalid zone number: %d", zoneNumber);
         return;
     }
 
-    // Stop any active irrigation first
-    if (isIrrigating) {
-        COM_LOG(LOG_LEVEL_WARN, "Stopping previous irrigation before starting new one");
-        stopIrrigation();
-        delay(500); // Brief delay
-    }
-
-    // Calculate time breakdown for better logging
+    int zoneIndex = zoneNumber - 1;
     unsigned long minutes = durationSeconds / 60;
     unsigned long seconds = durationSeconds % 60;
 
-    COM_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation:");
-    COM_LOG(LOG_LEVEL_INFO, "   Zone: %d (GPIO %d)", zoneNumber, zoneRelayPins[zoneNumber - 1]);
+    COM_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation for Zone %d:", zoneNumber);
+    COM_LOG(LOG_LEVEL_INFO, "   GPIO: %d (Relay PIN)", zoneRelayPins[zoneIndex]);
     if (minutes > 0) {
         COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu min %lu sec (%d total seconds)",
                minutes, seconds, durationSeconds);
@@ -145,81 +194,149 @@ static void startIrrigation(int zoneNumber, int durationSeconds) {
         COM_LOG(LOG_LEVEL_INFO, "   Duration: %lu sec", seconds);
     }
 
-    // Turn on pump first (active LOW - set to LOW to activate)
-    digitalWrite(PUMP_RELAY_PIN, LOW);
-    COM_LOG(LOG_LEVEL_INFO, "   ✅ Pump: ON (GPIO %d = LOW)", PUMP_RELAY_PIN);
+    // Store zone state
+    unsigned long startTimeMs = millis();
+    unsigned long endTimeMs = startTimeMs + (durationSeconds * 1000);
+
+    zoneStates[zoneIndex].isActive = true;
+    zoneStates[zoneIndex].endTime = endTimeMs;
+    zoneStates[zoneIndex].durationSeconds = durationSeconds;
+    zoneStates[zoneIndex].zoneId = zoneId;
+
+    // NOTE: Pump is now controlled independently by ESP32_master based on tank level
+    // No longer automatically tied to zone irrigation state
+    COM_LOG(LOG_LEVEL_INFO, "   ℹ️  Pump control is now independent (tank level based)");
 
     // Turn on zone relay (active LOW - set to LOW to activate)
-    int zoneIndex = zoneNumber - 1;
     digitalWrite(zoneRelayPins[zoneIndex], LOW);
     COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d relay: ON (GPIO %d = LOW)", zoneNumber, zoneRelayPins[zoneIndex]);
 
+    // Update legacy variables for backward compatibility
     isIrrigating = true;
     activeZoneNumber = zoneNumber;
-    irrigationEndTime = millis() + (durationSeconds * 1000);
+    irrigationEndTime = endTimeMs;
 
-    unsigned long endTimeMs = irrigationEndTime;
     unsigned long endTimeSec = endTimeMs / 1000;
-    COM_LOG(LOG_LEVEL_INFO, "   ⏱️  Irrigation will stop automatically at %lu seconds from now", endTimeSec);
+    COM_LOG(LOG_LEVEL_INFO, "   ⏱️  Zone %d will stop automatically at +%lu seconds", zoneNumber, (endTimeSec - (startTimeMs / 1000)));
 }
 
-// Stop irrigation (exactly like versio logic - active LOW)
-static void stopIrrigation() {
-    if (!isIrrigating) {
-        COM_LOG(LOG_LEVEL_DEBUG, "No active irrigation to stop");
-        return;
-    }
+// Stop irrigation - NOW SUPPORTS MULTIPLE ZONES (can stop individual zones - active LOW)
+static void stopIrrigation(int zoneNumber) {
+    if (zoneNumber == 0) {
+        // Stop ALL zones
+        COM_LOG(LOG_LEVEL_INFO, "🛑 Stopping ALL active irrigation zones");
 
-    int stoppedZone = activeZoneNumber;
-    COM_LOG(LOG_LEVEL_INFO, "🛑 Stopping irrigation:");
-    COM_LOG(LOG_LEVEL_INFO, "   Zone: %d", stoppedZone);
+        for (int i = 0; i < MAX_ZONES; i++) {
+            if (zoneStates[i].isActive) {
+                int zone = i + 1;
+                digitalWrite(zoneRelayPins[i], HIGH);
+                COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d relay: OFF (GPIO %d = HIGH)", zone, zoneRelayPins[i]);
+                zoneStates[i].isActive = false;
+                zoneStates[i].endTime = 0;
+                zoneStates[i].durationSeconds = 0;
+                zoneStates[i].zoneId = "";
+            }
+        }
 
-    // Turn off zone relay (active LOW - set to HIGH to deactivate)
-    if (activeZoneNumber > 0 && activeZoneNumber <= MAX_ZONES) {
-        int zoneIndex = activeZoneNumber - 1;
+        // NOTE: Pump is now controlled independently by ESP32_master based on tank level
+        // No longer automatically stopped when zones finish
+        COM_LOG(LOG_LEVEL_INFO, "   ℹ️  Pump remains under independent tank level control");
+
+        // Update legacy variables
+        isIrrigating = false;
+        activeZoneNumber = 0;
+        irrigationEndTime = 0;
+
+        COM_LOG(LOG_LEVEL_INFO, "   ✅ All irrigation zones stopped successfully");
+    } else if (zoneNumber >= 1 && zoneNumber <= MAX_ZONES) {
+        // Stop SPECIFIC zone
+        int zoneIndex = zoneNumber - 1;
+
+        if (!zoneStates[zoneIndex].isActive) {
+            COM_LOG(LOG_LEVEL_DEBUG, "Zone %d not active - nothing to stop", zoneNumber);
+            return;
+        }
+
+        COM_LOG(LOG_LEVEL_INFO, "🛑 Stopping irrigation for Zone %d:", zoneNumber);
+
+        // Turn off zone relay (active LOW - set to HIGH to deactivate)
         digitalWrite(zoneRelayPins[zoneIndex], HIGH);
-        COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d relay: OFF (GPIO %d = HIGH)",
-               activeZoneNumber, zoneRelayPins[zoneIndex]);
+        COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d relay: OFF (GPIO %d = HIGH)", zoneNumber, zoneRelayPins[zoneIndex]);
+
+        zoneStates[zoneIndex].isActive = false;
+        zoneStates[zoneIndex].endTime = 0;
+        zoneStates[zoneIndex].durationSeconds = 0;
+        zoneStates[zoneIndex].zoneId = "";
+
+        // NOTE: Pump is now controlled independently by ESP32_master based on tank level
+        // No longer affected by individual zone irrigation state
+        COM_LOG(LOG_LEVEL_INFO, "   ℹ️  Pump control independent of zone state");
+
+        // Update legacy variables for backward compatibility
+        // Check if any zones are still active
+        bool anyZoneActive = false;
+        for (int i = 0; i < MAX_ZONES; i++) {
+            if (zoneStates[i].isActive) {
+                anyZoneActive = true;
+                break;
+            }
+        }
+
+        if (!anyZoneActive) {
+            isIrrigating = false;
+            activeZoneNumber = 0;
+            irrigationEndTime = 0;
+        }
+
+        COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d irrigation stopped successfully", zoneNumber);
+    } else {
+        COM_LOG(LOG_LEVEL_ERROR, "Invalid zone number: %d", zoneNumber);
     }
-
-    // Turn off pump (active LOW - set to HIGH to deactivate)
-    digitalWrite(PUMP_RELAY_PIN, HIGH);
-    COM_LOG(LOG_LEVEL_INFO, "   ✅ Pump: OFF (GPIO %d = HIGH)", PUMP_RELAY_PIN);
-
-    isIrrigating = false;
-    activeZoneNumber = 0;
-    irrigationEndTime = 0;
-
-    COM_LOG(LOG_LEVEL_INFO, "   ✅ Irrigation stopped successfully");
 }
 
-// Check irrigation timer (exactly like versio)
+// Check irrigation timer - NOW HANDLES MULTIPLE ZONES INDEPENDENTLY
 static void checkIrrigationTimer() {
-    if (isIrrigating && irrigationEndTime > 0) {
-        unsigned long currentTime = millis();
+    unsigned long currentTime = millis();
 
-        if (currentTime >= irrigationEndTime) {
-            COM_LOG(LOG_LEVEL_INFO, "⏰ Irrigation timer expired for Zone %d - stopping automatically",
-                   activeZoneNumber);
-            stopIrrigation();
-        } else {
-            // Display remaining time every 5 seconds
-            static unsigned long lastTimerLog = 0;
-            if (currentTime - lastTimerLog >= 5000) {
-                lastTimerLog = currentTime;
-                unsigned long remainingMs = irrigationEndTime - currentTime;
+    // Check each zone independently
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive && zoneStates[i].endTime > 0) {
+            if (currentTime >= zoneStates[i].endTime) {
+                // This zone's timer expired
+                int zoneNum = i + 1;
+                COM_LOG(LOG_LEVEL_INFO, "⏰ Irrigation timer expired for Zone %d - stopping automatically", zoneNum);
+                stopIrrigation(zoneNum);
+            }
+        }
+    }
+
+    // Display remaining time every 5 seconds (for all active zones)
+    static unsigned long lastTimerLog = 0;
+    if (currentTime - lastTimerLog >= 5000) {
+        lastTimerLog = currentTime;
+        bool anyActive = false;
+
+        for (int i = 0; i < MAX_ZONES; i++) {
+            if (zoneStates[i].isActive && zoneStates[i].endTime > 0) {
+                anyActive = true;
+                int zoneNum = i + 1;
+                unsigned long remainingMs = zoneStates[i].endTime - currentTime;
                 unsigned long remainingSeconds = remainingMs / 1000;
                 unsigned long remainingMinutes = remainingSeconds / 60;
                 remainingSeconds = remainingSeconds % 60;
 
                 if (remainingMinutes > 0) {
-                    COM_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone %d | Time remaining: %lu min %lu sec",
-                           activeZoneNumber, remainingMinutes, remainingSeconds);
+                    COM_LOG(LOG_LEVEL_INFO, "⏱️  Zone %d active | Time remaining: %lu min %lu sec",
+                           zoneNum, remainingMinutes, remainingSeconds);
                 } else {
-                    COM_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone %d | Time remaining: %lu sec",
-                           activeZoneNumber, remainingSeconds);
+                    COM_LOG(LOG_LEVEL_INFO, "⏱️  Zone %d active | Time remaining: %lu sec",
+                           zoneNum, remainingSeconds);
                 }
             }
+        }
+
+        if (!anyActive) {
+            lastTimerLog = 0; // Reset for next active irrigation
         }
     }
 }
@@ -301,7 +418,7 @@ static void ESP32_com_app_stop(void) {
     // Emergency stop: turn off all relays
     if (isIrrigating) {
         COM_LOG(LOG_LEVEL_WARN, "Emergency stop: turning off all relays");
-        stopIrrigation();
+        stopIrrigation(0);  // Stop all zones
     }
 
     // Ensure all relays are OFF

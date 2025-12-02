@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
+#include <NewPing.h>
 #include <cstring>
 
 #define SENSOR_LOG(level, fmt, ...) \
@@ -33,6 +34,13 @@ static const uint16_t master_port = 81;
 #define MOISTURE_PIN_11 12
 #define MOISTURE_PIN_12 13
 
+// Ultrasonic sensor for tank level (using available pins)
+// GPIO 2: available output pin for trigger
+// GPIO 34: input-only pin perfect for echo
+#define ULTRASONIC_TRIGGER_PIN  2
+#define ULTRASONIC_ECHO_PIN     15
+#define MAX_DISTANCE           200
+
 static const int moisturePins[MAX_SENSORS] = {
     MOISTURE_PIN_1, MOISTURE_PIN_2, MOISTURE_PIN_3, MOISTURE_PIN_4,
     MOISTURE_PIN_5, MOISTURE_PIN_6, MOISTURE_PIN_7, MOISTURE_PIN_8,
@@ -42,6 +50,9 @@ static const int moisturePins[MAX_SENSORS] = {
 static WebSocketsClient* webSocket = nullptr;
 static bool app_running = false;
 
+// Ultrasonic sensor (global instance)
+static NewPing* sonar = nullptr;
+
 // Sensor readings storage
 static float sensorReadings[MAX_SENSORS];
 static unsigned long lastSensorRead = 0;
@@ -49,6 +60,60 @@ static unsigned long lastSensorRead = 0;
 // MoistureSensor instances for each sensor
 // Calibration: V_MIN = 1.50V (humide), V_MAX = 3.15V (sec)
 static MoistureSensor* moistureSensors[MAX_SENSORS] = {nullptr};
+
+// Measure tank level using ultrasonic sensor with simulation fallback
+static float measureTankLevel() {
+    static bool ultrasonicReady = (sonar != nullptr);
+    static bool loggedStatus = false;
+
+    // Log sensor status once at startup
+    if (!loggedStatus) {
+        if (ultrasonicReady) {
+            SENSOR_LOG(LOG_LEVEL_INFO, "Ultrasonic sensor initialized - GPIO %d (trigger), %d (echo)",
+                      ULTRASONIC_TRIGGER_PIN, ULTRASONIC_ECHO_PIN);
+        } else {
+            SENSOR_LOG(LOG_LEVEL_WARN, "Ultrasonic sensor not available - using simulation mode");
+        }
+        loggedStatus = true;
+    }
+
+    // Check if ultrasonic sensor is available
+    if (ultrasonicReady) {
+        // Try ultrasonic sensor first
+        unsigned int uS = sonar->ping_median(5); // Median of 5 readings for stability
+        if (uS > 0) {
+            float distance = uS / US_ROUNDTRIP_CM; // Convert to cm
+            // Log water level after each acquisition
+            SENSOR_LOG(LOG_LEVEL_INFO, "Water level: %.1f cm (real ultrasonic sensor)", distance);
+            return distance;
+        } else {
+            // Sensor failed this reading - fallback to simulation
+            static int failureCount = 0;
+            failureCount++;
+            if (failureCount % 50 == 0) { // Log every 50 failures to avoid spam
+                SENSOR_LOG(LOG_LEVEL_WARN, "Ultrasonic sensor reading failed - using simulation");
+            }
+        }
+    }
+
+    // Sensor not available or failed - use simulation
+    static float simulatedLevel = 50.0;
+    static bool decreasing = true;
+
+    // Simulate gradual tank level changes
+    if (decreasing) {
+        simulatedLevel -= 0.5;
+        if (simulatedLevel <= 20.0) decreasing = false;
+    } else {
+        simulatedLevel += 0.5;
+        if (simulatedLevel >= 90.0) decreasing = true;
+    }
+
+    // Log simulated water level after each acquisition
+    SENSOR_LOG(LOG_LEVEL_INFO, "Water level: %.1f cm (simulation mode)", simulatedLevel);
+
+    return simulatedLevel;
+}
 
 // Read all moisture sensors using MoistureSensor class
 static void readAllSensors() {
@@ -93,6 +158,9 @@ static void sendSensorData() {
         doc[sensorId] = sensorReadings[i];
     }
 
+    // NEW: Add tank level measurement
+    doc["tankLevel"] = measureTankLevel();
+
     doc["timestamp"] = millis();
     doc["deviceType"] = "sensor";
 
@@ -116,7 +184,6 @@ static void onWebSocketEvent_sensor(WStype_t type, uint8_t * payload, size_t len
             break;
         case WStype_TEXT:
             SENSOR_LOG(LOG_LEVEL_DEBUG, "[Master → Sensor] %.*s", length, payload);
-            // Master may send commands, but sensor mainly sends data
             break;
         case WStype_BIN:
             SENSOR_LOG(LOG_LEVEL_DEBUG, "WebSocket binary message received");
@@ -157,6 +224,20 @@ static void ESP32_sensor_app_start(void) {
         }
     }
 
+    // NEW: Initialize ultrasonic sensor
+    sonar = new NewPing(ULTRASONIC_TRIGGER_PIN, ULTRASONIC_ECHO_PIN, MAX_DISTANCE);
+    if (sonar == nullptr) {
+        SENSOR_LOG(LOG_LEVEL_ERROR, "Failed to create ultrasonic sensor object");
+    } else {
+        // Test ultrasonic sensor at boot
+        unsigned int testPing = sonar->ping();
+        if (testPing == 0) {
+            SENSOR_LOG(LOG_LEVEL_WARN, "Ultrasonic sensor not detected - will use simulation");
+        } else {
+            SENSOR_LOG(LOG_LEVEL_INFO, "Ultrasonic sensor ready for tank level measurement");
+        }
+    }
+
     // Connexion au réseau AP du Master
     SENSOR_LOG(LOG_LEVEL_INFO, "Connecting to master AP: %s", master_ap_ssid);
     WiFi.begin(master_ap_ssid, master_ap_pass);
@@ -185,6 +266,7 @@ static void ESP32_sensor_app_start(void) {
     webSocket->begin(master_ip, master_port, "/");
     webSocket->onEvent(onWebSocketEvent_sensor);
     webSocket->setReconnectInterval(5000); // Reconnexion automatique
+    webSocket->enableHeartbeat(30000, 10000, 3); // Ping every 30s, timeout 10s, 3 retries
 
     SENSOR_LOG(LOG_LEVEL_INFO, "WebSocket client started, connecting to %s:%d", master_ip, master_port);
 
@@ -236,15 +318,15 @@ static void ESP32_sensor_app_loop(void) {
 
     unsigned long currentTime = millis();
 
-    // Read sensors every 5 seconds (exactly like versio)
-    if (currentTime - lastSensorRead >= 5000) {
+    // Read sensors every 2 seconds
+    if (currentTime - lastSensorRead >= 2000) {
         readAllSensors();
         lastSensorRead = currentTime;
     }
 
-    // Send sensor data to master every 5 seconds (exactly like versio)
+    // Send sensor data to master every 2 seconds
     static unsigned long lastSend = 0;
-    if (currentTime - lastSend >= 5000) {
+    if (currentTime - lastSend >= 2000) {
         lastSend = currentTime;
 
         if (webSocket->isConnected()) {

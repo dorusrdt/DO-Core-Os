@@ -20,8 +20,8 @@ if ! python3 -c "import fastapi, uvicorn" 2>/dev/null; then
 fi
 
 echo ""
-echo "🚀 Starting server on http://0.0.0.0:8000"
-echo "📝 API Docs: http://0.0.0.0:8000/docs"
+echo "🚀 Starting server on http://0.0.0.0:3000"
+echo "📝 API Docs: http://0.0.0.0:3000/docs"
 echo "📖 Press Ctrl+C to stop"
 echo ""
 
