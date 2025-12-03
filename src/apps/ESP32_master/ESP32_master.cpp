@@ -19,8 +19,8 @@ const char* ap_pass = "12345678";
 // Configuration serveur externe
 // NOTE: Port 3000 pour serveur réel (irrigation-ai-v-beta), port 8000 pour serveur de simulation
 //static const char* serverURL = "http://10.201.195.53:3000";
-//static const char* serverURL = "http://10.201.195.147:3000";
-static const char* serverURL = "http://192.168.1.72:3000";
+static const char* serverURL = "http://10.106.171.53:3000";
+//static const char* serverURL = "http://192.168.1.72:3000";
 static const char* deviceId = "ESP32_IRRIGATION_11100454456464674";
 static const char* deviceSecret = "esp32-secure-key-2024";
 
@@ -1468,14 +1468,24 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
             MASTER_LOG(LOG_LEVEL_DEBUG, "[Client #%u → Master] %.*s", num, length, payload);
             String clientMessage = String((char*)payload, length);
 
-            // Check if this is sensor data from ESP32_sensor (client 0 typically)
-            if (num == 0) {
-                updateSlaveSensorData(num, clientMessage);
+            // Parse message to check device type
+            DynamicJsonDocument msgDoc(512);
+            DeserializationError error = deserializeJson(msgDoc, clientMessage);
+            if (!error) {
+                String deviceType = msgDoc["deviceType"].as<String>();
 
-                // Send acknowledgment back to sensor (confirms data received)
-                String ackMessage = "{\"type\":\"sensor_ack\",\"status\":\"received\",\"timestamp\":" + String(millis()) + "}";
-                webSocket->sendTXT(num, ackMessage);
-                MASTER_LOG(LOG_LEVEL_DEBUG, "Sent sensor data acknowledgment to client #%u", num);
+                if (deviceType == "sensor") {
+                    // This is sensor data from ESP32_sensor
+                    updateSlaveSensorData(num, clientMessage);
+
+                    // Send acknowledgment back to sensor (confirms data received)
+                    String ackMessage = "{\"type\":\"sensor_ack\",\"status\":\"received\",\"timestamp\":" + String(millis()) + "}";
+                    webSocket->sendTXT(num, ackMessage);
+                    MASTER_LOG(LOG_LEVEL_DEBUG, "Sent sensor data acknowledgment to client #%u", num);
+                }
+                // Other device types (like "com") are handled elsewhere if needed
+            } else {
+                MASTER_LOG(LOG_LEVEL_WARN, "Failed to parse client message from #%u: %s", num, error.c_str());
             }
             break;
         }
