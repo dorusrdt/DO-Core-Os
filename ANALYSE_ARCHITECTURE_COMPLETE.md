@@ -5,13 +5,14 @@
 **D'O-Core OS** est un système d'exploitation embarqué minimaliste conçu pour les microcontrôleurs ESP32. C'est un framework modulaire qui fournit une couche d'abstraction complète pour gérer les tâches, la mémoire, les logs, le réseau et les applications.
 
 ### Caractéristiques principales
-- ✅ **Kernel temps réel** basé sur FreeRTOS
+- ✅ **Kernel temps réel** basé sur Arduino Framework + FreeRTOS
 - ✅ **Gestion des tâches** avec priorités et affinité CPU
 - ✅ **Système de logs** optimisé avec buffer circulaire
 - ✅ **Gestion mémoire** avec pool d'allocation
-- ✅ **Stack réseau** WiFi + HTTP + NTP + OTA
+- ✅ **Communication ESP-NOW** pour Master-Slave (P2P)
+- ✅ **Stack réseau** WiFi + WebSocket + HTTP + NTP + OTA
 - ✅ **Synchronisation temps** multi-source (NTP, RTC, Système)
-- ✅ **Framework d'applications** modulaire
+- ✅ **Framework d'applications** modulaire (ESP32_master, ESP32_sensor, ESP32_com)
 - ✅ **Interface CLI** complète avec shell interactif
 
 ---
@@ -46,7 +47,16 @@ DO-Core-Os/
 │   │   └── app/
 │   │       └── app_manager.cpp/h         # Gestionnaire d'apps
 │   ├── apps/
-│   │   └── example_app/                  # Application exemple
+│   │   ├── ESP32_master/                 # Application Master (coordination)
+│   │   │   ├── ESP32_master.cpp/h        # Logique principale master
+│   │   │   └── irrigation_common.h       # Structures partagées
+│   │   ├── ESP32_sensor/                 # Application Capteurs
+│   │   │   ├── ESP32_sensor.cpp/h        # Lecture 12 capteurs
+│   │   │   └── MoistureSensor.h          # Classe calibration
+│   │   ├── ESP32_com/                    # Application Relais
+│   │   │   ├── ESP32_com.cpp/h           # Contrôle 4 relais
+│   │   │   └── irrigation_common.h       # Structures partagées
+│   │   └── example_app/                  # Template application
 │   │       ├── example_app.cpp/h
 │   │       └── README.md
 │   └── lib/
@@ -205,26 +215,31 @@ HEARTBEAT_SYSTEM_ERROR
 
 ---
 
-### 3. **NETWORK STACK** (`src/kernel/network/`)
+### 3. **COMMUNICATION ESP-NOW** (`src/apps/`)
 
-#### WiFi Manager (`wifi_manager.cpp/h`)
-**Responsabilité**: Gestion WiFi STA/AP
+#### ESP-NOW Protocol (Implémenté dans applications)
+**Responsabilité**: Communication P2P Master-Slave
 
 ```cpp
-// Configuration
-wifi_manager_init(&config);
-wifi_manager_connect();
-wifi_manager_disconnect();
+// Initialisation ESP-NOW (dans ESP32_master)
+esp_now_init();
+esp_now_register_recv_cb(onEspNowReceive);
 
-// Statut
-WifiStatus_t wifi_manager_get_status();
+// Envoi de commandes (Master vers Slave)
+esp_now_send(slaveMac, commandData, sizeof(commandData));
+
+// Réception données (Slave vers Master)
+void onEspNowReceive(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
+    // Traiter données capteurs ou accusés
+}
 ```
 
 **Caractéristiques**:
-- Mode STA (Station)
-- Reconnexion automatique
-- Gestion des credentials
-- Monitoring RSSI
+- Communication directe device-to-device
+- Portée 250m en extérieur
+- Vitesse 1 Mbps
+- Pas de WiFi requis
+- Fonctionne dans environnements difficiles
 
 #### NTP Manager (`ntp_manager.cpp/h`)
 **Responsabilité**: Synchronisation temps réseau
@@ -466,7 +481,7 @@ Fichier `minimal_config.h` pour tous les paramètres:
 ├─────────────────────────────────────┤
 │  Kernel Core (Tasks, Memory, Logs)  │
 ├─────────────────────────────────────┤
-│  FreeRTOS + ESP-IDF                 │
+│  Arduino Framework + FreeRTOS       │
 ├───────────────────────────���─────────┤
 │  Hardware (ESP32)                   │
 └─────────────────────────────────────┘
