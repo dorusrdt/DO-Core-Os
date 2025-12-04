@@ -19,8 +19,8 @@ const char* ap_pass = "12345678";
 // Configuration serveur externe
 // NOTE: Port 3000 pour serveur réel (irrigation-ai-v-beta), port 8000 pour serveur de simulation
 //static const char* serverURL = "http://10.201.195.53:3000";
-static const char* serverURL = "http://10.106.171.53:3000";
-//static const char* serverURL = "http://192.168.1.72:3000";
+// const char* serverURL = "http://10.106.171.53:3000";
+static const char* serverURL = "http://192.168.1.72:3000";
 static const char* deviceId = "ESP32_IRRIGATION_11100454456464674";
 static const char* deviceSecret = "esp32-secure-key-2024";
 
@@ -111,10 +111,26 @@ static float currentTankLevel = 50.0;
 // Pump control state
 static String lastPumpCommand = "UNKNOWN";
 
-// Irrigation Control Variables (exactly like versio)
+// Irrigation Control Variables - NOW SUPPORTS MULTIPLE ZONES SIMULTANEOUSLY
+// Structure pour tracker l'irrigation de chaque zone indépendamment
+struct ZoneIrrigationState {
+    bool isActive;                      // Zone is currently irrigating
+    unsigned long endTime;              // When this zone's irrigation ends (ms)
+    int durationSeconds;                // Original duration for display
+    String zoneId;                      // Zone ID from server
+};
+
+static ZoneIrrigationState zoneStates[MAX_ZONES] = {
+    {false, 0, 0, ""},
+    {false, 0, 0, ""},
+    {false, 0, 0, ""},
+    {false, 0, 0, ""}
+};
+
+// Legacy variables for backward compatibility (can be removed later)
 static bool isIrrigating = false;
-static unsigned long activeIrrigationTimer = 0;
-static String activeZoneId = "";
+static int activeZoneNumber = 0; // 1-4, 0 = none (for logging purposes)
+static unsigned long irrigationEndTime = 0; // For logging purposes
 
 // Collecte des données slaves (sensor readings from ESP32_sensor)
 // Buffer pour recevoir les données de l'ESP32_sensor
@@ -137,6 +153,7 @@ static void checkIrrigationSchedule();
 static void checkMoistureThresholds();
 static void executeIrrigation(String zoneId, int durationSeconds);
 static void checkIrrigationTimer();
+static void stopIrrigation(String zoneId);  // NEW: Stop specific zone
 static String generateHMAC(String data);
 static String getTimestamp();
 static void updateSlaveSensorData(uint8_t slaveId, String data);
@@ -856,36 +873,34 @@ static void parseConfiguration(String jsonResponse) {
     }
 }
 
-// Handle zone deletion (exactly like versio)
+// Handle zone deletion (UPDATED for multi-zone support)
 static void handleZoneDeletion(String zoneId) {
     MASTER_LOG(LOG_LEVEL_INFO, "Processing zone deletion: %s", zoneId.c_str());
 
-    // Stop any active irrigation immediately if it's for this zone (exactly like versio)
-    if (isIrrigating && activeIrrigationTimer > 0 && activeZoneId == zoneId) {
-        MASTER_LOG(LOG_LEVEL_WARN, "Stopping active irrigation for zone deletion");
-        activeIrrigationTimer = 0;
-        isIrrigating = false;
+    // Stop any active irrigation for this zone
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive && zoneStates[i].zoneId == zoneId) {
+            MASTER_LOG(LOG_LEVEL_WARN, "Stopping active irrigation for zone deletion: %s", zoneId.c_str());
 
-        // Find physical zone number for the stop command
-        int physicalZoneNumber = 0;
-        for (int i = 0; i < MAX_ZONES; i++) {
-            if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
-                physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
-                break;
+            // Reset zone state
+            zoneStates[i].isActive = false;
+            zoneStates[i].endTime = 0;
+            zoneStates[i].durationSeconds = 0;
+            zoneStates[i].zoneId = "";
+
+            // Send stop command to ESP32_com
+            int physicalZoneNumber = i + 1;
+            if (webSocket) {
+                DynamicJsonDocument stopDoc(256);
+                stopDoc["action"] = "stop_irrigation";
+                stopDoc["zoneId"] = zoneId;
+                stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+                String stopCmd;
+                serializeJson(stopDoc, stopCmd);
+                webSocket->broadcastTXT(stopCmd);
             }
-        }
-
-        activeZoneId = "";
-        // Send stop command to ESP32_com via WebSocket with physical zone number
-        if (webSocket) {
-            DynamicJsonDocument stopDoc(256);
-            stopDoc["action"] = "stop_irrigation";
-            stopDoc["zoneId"] = zoneId;
-            stopDoc["physicalZoneNumber"] = physicalZoneNumber;
-
-            String stopCmd;
-            serializeJson(stopDoc, stopCmd);
-            webSocket->broadcastTXT(stopCmd);
+            break; // Only one zone can match
         }
     }
 
@@ -1323,90 +1338,133 @@ static void checkMoistureThresholds() {
     }
 }
 
-// Check irrigation timer (exactly like versio)
-static unsigned long lastRemainingTimeLog = 0;  // Move static outside to persist across calls
-
+// Check irrigation timer - NOW HANDLES MULTIPLE ZONES INDEPENDENTLY
 static void checkIrrigationTimer() {
-    if (isIrrigating && activeIrrigationTimer > 0) {
-        unsigned long currentTime = millis();
+    unsigned long currentTime = millis();
 
-        if (currentTime >= activeIrrigationTimer) {
-            // Stop irrigation
-            isIrrigating = false;
-            activeIrrigationTimer = 0;
-            String zoneId = activeZoneId;
-            activeZoneId = "";
-            lastRemainingTimeLog = 0;  // Reset log timer
+    // Check each zone independently (NEW - like ESP32_com)
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive && zoneStates[i].endTime > 0) {
+            if (currentTime >= zoneStates[i].endTime) {
+                // This zone's timer expired
+                String zoneId = zoneStates[i].zoneId;
+                int physicalZoneNumber = i + 1; // Assuming zone index maps to physical number
 
-            MASTER_LOG(LOG_LEVEL_INFO, "✅ Irrigation completed for zone %s", zoneId.c_str());
+                MASTER_LOG(LOG_LEVEL_INFO, "⏰ Irrigation timer expired for Zone %s - stopping automatically", zoneId.c_str());
 
-            // Send stop command to ESP32_com with physical zone number
-            if (webSocket) {
-                // Find physical zone number
-                int physicalZoneNumber = 0;
-                for (int i = 0; i < MAX_ZONES; i++) {
-                    if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
-                        physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
-                        break;
-                    }
+                // Reset zone state
+                zoneStates[i].isActive = false;
+                zoneStates[i].endTime = 0;
+                zoneStates[i].durationSeconds = 0;
+                zoneStates[i].zoneId = "";
+
+                // Send stop command to ESP32_com
+                if (webSocket) {
+                    DynamicJsonDocument stopDoc(256);
+                    stopDoc["action"] = "stop_irrigation";
+                    stopDoc["zoneId"] = zoneId;
+                    stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+                    String stopCmd;
+                    serializeJson(stopDoc, stopCmd);
+                    webSocket->broadcastTXT(stopCmd);
                 }
 
-                DynamicJsonDocument stopDoc(256);
-                stopDoc["action"] = "stop_irrigation";
-                stopDoc["zoneId"] = zoneId;
-                stopDoc["physicalZoneNumber"] = physicalZoneNumber;
-
-                String stopCmd;
-                serializeJson(stopDoc, stopCmd);
-                webSocket->broadcastTXT(stopCmd);
+                MASTER_LOG(LOG_LEVEL_INFO, "✅ Irrigation completed for zone %s", zoneId.c_str());
             }
-        } else {
-            // Calculate and display remaining time
-            unsigned long remainingMs = activeIrrigationTimer - currentTime;
-            unsigned long remainingSeconds = remainingMs / 1000;
-            unsigned long remainingMinutes = remainingSeconds / 60;
-            remainingSeconds = remainingSeconds % 60;
+        }
+    }
 
-            // Display remaining time immediately on first call, then every 5 seconds
-            if (lastRemainingTimeLog == 0 || (currentTime - lastRemainingTimeLog >= 5000)) {
-                lastRemainingTimeLog = currentTime;
+    // Update legacy variables for backward compatibility
+    // Check if any zones are still active
+    bool anyZoneActive = false;
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive) {
+            anyZoneActive = true;
+            break;
+        }
+    }
+
+    if (!anyZoneActive) {
+        isIrrigating = false;
+        activeZoneNumber = 0;
+        irrigationEndTime = 0;
+    }
+
+    // Display remaining time every 5 seconds (for all active zones)
+    static unsigned long lastTimerLog = 0;
+    if (currentTime - lastTimerLog >= 5000) {
+        lastTimerLog = currentTime;
+        bool anyActive = false;
+
+        for (int i = 0; i < MAX_ZONES; i++) {
+            if (zoneStates[i].isActive && zoneStates[i].endTime > 0) {
+                anyActive = true;
+                String zoneId = zoneStates[i].zoneId;
+                unsigned long remainingMs = zoneStates[i].endTime - currentTime;
+                unsigned long remainingSeconds = remainingMs / 1000;
+                unsigned long remainingMinutes = remainingSeconds / 60;
+                remainingSeconds = remainingSeconds % 60;
 
                 if (remainingMinutes > 0) {
-                    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone: %s | Time remaining: %lu min %lu sec",
-                             activeZoneId.c_str(), remainingMinutes, remainingSeconds);
+                    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Zone %s active | Time remaining: %lu min %lu sec",
+                              zoneId.c_str(), remainingMinutes, remainingSeconds);
                 } else {
-                    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation active - Zone: %s | Time remaining: %lu sec",
-                             activeZoneId.c_str(), remainingSeconds);
+                    MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Zone %s active | Time remaining: %lu sec",
+                              zoneId.c_str(), remainingSeconds);
                 }
             }
         }
-    } else {
-        // Reset log timer when not irrigating
-        if (lastRemainingTimeLog > 0) {
-            lastRemainingTimeLog = 0;
+
+        if (!anyActive) {
+            lastTimerLog = 0; // Reset for next active irrigation
         }
     }
 }
 
 // Execute irrigation - NOW SUPPORTS MULTIPLE ZONES SIMULTANEOUSLY
 static void executeIrrigation(String zoneId, int durationSeconds) {
+    // DEBUG: Log all calls to executeIrrigation to identify duplicate calls
+    static unsigned long lastExecuteCall = 0;
+    static String lastZoneCalled = "";
+    static int callCount = 0;
+
+    unsigned long currentTime = millis();
+    callCount++;
+
+    MASTER_LOG(LOG_LEVEL_DEBUG, "[DEBUG] executeIrrigation() called #%d for zone '%s' (%d sec) - Time since last call: %lu ms",
+              callCount, zoneId.c_str(), durationSeconds, currentTime - lastExecuteCall);
+
+    if (lastZoneCalled == zoneId && (currentTime - lastExecuteCall) < 1000) {
+        MASTER_LOG(LOG_LEVEL_WARN, "[DEBUG] POTENTIAL DUPLICATE: Same zone called twice within 1 second!");
+    }
+
+    lastExecuteCall = currentTime;
+    lastZoneCalled = zoneId;
+
     // Find the zone slot
     ZoneSlot* zoneSlot = nullptr;
+    int zoneIndex = -1;
     for (int i = 0; i < MAX_ZONES; i++) {
         if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
             zoneSlot = &ZONE_STACK[i];
+            zoneIndex = i;
             break;
         }
     }
 
-    if (!zoneSlot) {
+    if (!zoneSlot || zoneIndex == -1) {
         MASTER_LOG(LOG_LEVEL_WARN, "Zone %s not found or not configured", zoneId.c_str());
         return;
     }
 
-    // CHANGED: NOW allows multiple zones to irrigate simultaneously
-    // NOTE: We removed the "if (isIrrigating)" check that was preventing parallel irrigation
-    // Each zone can now run its own irrigation independently
+    // Check if zone is already active (prevent duplicate commands)
+    if (zoneStates[zoneIndex].isActive) {
+        MASTER_LOG(LOG_LEVEL_DEBUG, "[DEBUG] Zone %s already active (endTime: %lu, remaining: %lu sec), skipping command",
+                  zoneId.c_str(), zoneStates[zoneIndex].endTime,
+                  (zoneStates[zoneIndex].endTime > currentTime) ? (zoneStates[zoneIndex].endTime - currentTime) / 1000 : 0);
+        return;
+    }
 
     // Calculate time breakdown for display
     unsigned long minutes = durationSeconds / 60;
@@ -1414,22 +1472,29 @@ static void executeIrrigation(String zoneId, int durationSeconds) {
 
     if (minutes > 0) {
         MASTER_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation for zone %s (Physical #%d) | Duration: %lu min %lu sec",
-                 zoneId.c_str(), zoneSlot->physicalZoneNumber, minutes, seconds);
+                  zoneId.c_str(), zoneSlot->physicalZoneNumber, minutes, seconds);
     } else {
         MASTER_LOG(LOG_LEVEL_INFO, "🚰 Starting irrigation for zone %s (Physical #%d) | Duration: %lu sec",
-                 zoneId.c_str(), zoneSlot->physicalZoneNumber, seconds);
+                  zoneId.c_str(), zoneSlot->physicalZoneNumber, seconds);
     }
 
-    // Update global state for this zone (will track first zone for compatibility)
-    if (!isIrrigating) {
-        isIrrigating = true;
-        activeZoneId = zoneId;
-        activeIrrigationTimer = millis() + (durationSeconds * 1000);
-    }
+    // Store zone state (NEW - like ESP32_com)
+    unsigned long startTimeMs = millis();
+    unsigned long endTimeMs = startTimeMs + (durationSeconds * 1000);
+
+    zoneStates[zoneIndex].isActive = true;
+    zoneStates[zoneIndex].endTime = endTimeMs;
+    zoneStates[zoneIndex].durationSeconds = durationSeconds;
+    zoneStates[zoneIndex].zoneId = zoneId;
+
+    // Update legacy variables for backward compatibility
+    isIrrigating = true;
+    activeZoneNumber = zoneSlot->physicalZoneNumber;
+    irrigationEndTime = endTimeMs;
 
     // Display initial remaining time
     MASTER_LOG(LOG_LEVEL_INFO, "⏱️  Irrigation started - Zone: %s | Time remaining: %lu min %lu sec",
-             zoneId.c_str(), minutes, seconds);
+              zoneId.c_str(), minutes, seconds);
 
     // Send irrigation command to ESP32_com via WebSocket
     if (webSocket) {
@@ -1445,6 +1510,70 @@ static void executeIrrigation(String zoneId, int durationSeconds) {
 
         MASTER_LOG(LOG_LEVEL_INFO, "Irrigation command sent to ESP32_com: %s", cmdStr.c_str());
     }
+}
+
+// NEW: Stop irrigation for specific zone
+static void stopIrrigation(String zoneId) {
+    // Find zone index
+    int zoneIndex = -1;
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive && zoneStates[i].zoneId == zoneId) {
+            zoneIndex = i;
+            break;
+        }
+    }
+
+    if (zoneIndex == -1) {
+        MASTER_LOG(LOG_LEVEL_DEBUG, "Zone %s not active - nothing to stop", zoneId.c_str());
+        return;
+    }
+
+    MASTER_LOG(LOG_LEVEL_INFO, "🛑 Stopping irrigation for Zone %s", zoneId.c_str());
+
+    // Find physical zone number
+    int physicalZoneNumber = 0;
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == zoneId) {
+            physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
+            break;
+        }
+    }
+
+    // Send stop command to ESP32_com
+    if (webSocket) {
+        DynamicJsonDocument stopDoc(256);
+        stopDoc["action"] = "stop_irrigation";
+        stopDoc["zoneId"] = zoneId;
+        stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+        String stopCmd;
+        serializeJson(stopDoc, stopCmd);
+        webSocket->broadcastTXT(stopCmd);
+    }
+
+    // Reset zone state
+    zoneStates[zoneIndex].isActive = false;
+    zoneStates[zoneIndex].endTime = 0;
+    zoneStates[zoneIndex].durationSeconds = 0;
+    zoneStates[zoneIndex].zoneId = "";
+
+    // Update legacy variables for backward compatibility
+    // Check if any zones are still active
+    bool anyZoneActive = false;
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive) {
+            anyZoneActive = true;
+            break;
+        }
+    }
+
+    if (!anyZoneActive) {
+        isIrrigating = false;
+        activeZoneNumber = 0;
+        irrigationEndTime = 0;
+    }
+
+    MASTER_LOG(LOG_LEVEL_INFO, "✅ Zone %s irrigation stopped successfully", zoneId.c_str());
 }
 
 // Gestionnaire d'événements WebSocket (serveur pour clients)
@@ -1596,31 +1725,39 @@ static void ESP32_master_app_stop(void) {
 
     MASTER_LOG(LOG_LEVEL_INFO, "Stopping ESP32 Master...");
 
-    // Stop any active irrigation
-    if (isIrrigating) {
-        if (webSocket) {
-            // Find physical zone number
-            int physicalZoneNumber = 0;
-            for (int i = 0; i < MAX_ZONES; i++) {
-                if (ZONE_STACK[i].configured && ZONE_STACK[i].zoneId == activeZoneId) {
-                    physicalZoneNumber = ZONE_STACK[i].physicalZoneNumber;
-                    break;
-                }
+    // Stop any active irrigation (NEW - stop all zones)
+    MASTER_LOG(LOG_LEVEL_INFO, "Emergency stop: stopping all active irrigation zones");
+
+    for (int i = 0; i < MAX_ZONES; i++) {
+        if (zoneStates[i].isActive) {
+            String zoneId = zoneStates[i].zoneId;
+            int physicalZoneNumber = i + 1;
+
+            if (webSocket) {
+                DynamicJsonDocument stopDoc(256);
+                stopDoc["action"] = "stop_irrigation";
+                stopDoc["zoneId"] = zoneId;
+                stopDoc["physicalZoneNumber"] = physicalZoneNumber;
+
+                String stopCmd;
+                serializeJson(stopDoc, stopCmd);
+                webSocket->broadcastTXT(stopCmd);
             }
 
-            DynamicJsonDocument stopDoc(256);
-            stopDoc["action"] = "stop_irrigation";
-            stopDoc["zoneId"] = activeZoneId;
-            stopDoc["physicalZoneNumber"] = physicalZoneNumber;
-
-            String stopCmd;
-            serializeJson(stopDoc, stopCmd);
-            webSocket->broadcastTXT(stopCmd);
+            // Reset zone state
+            zoneStates[i].isActive = false;
+            zoneStates[i].endTime = 0;
+            zoneStates[i].durationSeconds = 0;
+            zoneStates[i].zoneId = "";
         }
-        isIrrigating = false;
-        activeIrrigationTimer = 0;
-        activeZoneId = "";
     }
+
+    // Update legacy variables
+    isIrrigating = false;
+    activeZoneNumber = 0;
+    irrigationEndTime = 0;
+
+    MASTER_LOG(LOG_LEVEL_INFO, "All irrigation zones stopped successfully");
 
     if (webSocket) {
         webSocket->close();

@@ -182,6 +182,31 @@ static void startIrrigation(int zoneNumber, int durationSeconds, const String& z
     }
 
     int zoneIndex = zoneNumber - 1;
+
+    // GARDE AVANCÉE : If zone is already active, handle intelligently
+    if (zoneStates[zoneIndex].isActive) {
+        // Option 1: Extend duration if new duration is longer
+        if (durationSeconds > zoneStates[zoneIndex].durationSeconds) {
+            COM_LOG(LOG_LEVEL_INFO, "Zone %d already active, extending duration from %d to %d seconds",
+                   zoneNumber, zoneStates[zoneIndex].durationSeconds, durationSeconds);
+
+            unsigned long currentTime = millis();
+            unsigned long newEndTime = currentTime + (durationSeconds * 1000);
+
+            zoneStates[zoneIndex].endTime = newEndTime;
+            zoneStates[zoneIndex].durationSeconds = durationSeconds;
+
+            COM_LOG(LOG_LEVEL_INFO, "   ✅ Zone %d duration extended, will stop at +%lu seconds",
+                   zoneNumber, (newEndTime - currentTime) / 1000);
+            return;
+        } else {
+            // Option 2: Ignore if same or shorter duration
+            COM_LOG(LOG_LEVEL_DEBUG, "Zone %d already active with duration %d >= %d, ignoring duplicate START command",
+                   zoneNumber, zoneStates[zoneIndex].durationSeconds, durationSeconds);
+            return;
+        }
+    }
+
     unsigned long minutes = durationSeconds / 60;
     unsigned long seconds = durationSeconds % 60;
 

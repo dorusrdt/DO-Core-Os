@@ -64,18 +64,18 @@ if [ "$ZONE_COUNT" -ge 1 ]; then
       "sensors": [
         {"sensorId": "s01"},
         {"sensorId": "s02"},
-        {"sensorId": "s04"}
+        {"sensorId": "s03"}
       ],
       "irrigationSchedule": [
         {
-          "time": "03:51",
-          "duration": 15,
-          "daysOfWeek": [1, 3, 5],
+          "time": "04:28",
+          "duration": 4,
+          "daysOfWeek": [1, 4, 5],
           "isActive": true
         },
         {
-          "time": "03:53",
-          "duration": 20,
+          "time": "03:58",
+          "duration": 2,
           "daysOfWeek": [0, 2, 4, 6],
           "isActive": true
         }
@@ -102,8 +102,8 @@ if [ "$ZONE_COUNT" -ge 2 ]; then
       ],
       "irrigationSchedule": [
         {
-          "time": "06:00",
-          "duration": 20,
+          "time": "04:29",
+          "duration": 3,
           "daysOfWeek": [1, 2, 3, 4, 5],
           "isActive": true
         },
@@ -136,9 +136,9 @@ if [ "$ZONE_COUNT" -ge 3 ]; then
       ],
       "irrigationSchedule": [
         {
-          "time": "05:10",
-          "duration": 10,
-          "daysOfWeek": [0, 3, 5],
+          "time": "04:30",
+          "duration": 2,
+          "daysOfWeek": [0, 3, 4],
           "isActive": true
         }
       ]
@@ -164,8 +164,8 @@ if [ "$ZONE_COUNT" -ge 4 ]; then
       ],
       "irrigationSchedule": [
         {
-          "time": "07:00",
-          "duration": 25,
+          "time": "04:31",
+          "duration": 1,
           "daysOfWeek": [0, 1, 2, 3, 4, 5, 6],
           "isActive": true
         }
