@@ -5,10 +5,10 @@
 #include <time.h>
 #include "../core/kernel.h"
 
-// Configuration RTC DS3231
-#define RTC_SDA_PIN 21
-#define RTC_SCL_PIN 22
-#define RTC_I2C_ADDRESS 0x68
+// Configuration RTC DS1302 (3-wire protocol)
+#define RTC_RST_PIN 18  // RST/CE
+#define RTC_DAT_PIN 5   // IO/SDA
+#define RTC_CLK_PIN 15  // SCL/SCLK
 
 
 // États du RTC

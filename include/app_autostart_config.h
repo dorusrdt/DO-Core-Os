@@ -29,7 +29,7 @@
 
 // ESP32 Sensor Application (ID: 11)
 // Reads 12 moisture sensors and sends data to master
-#define CONFIG_APP_AUTOSTART_ESP32_SENSOR   1
+#define CONFIG_APP_AUTOSTART_ESP32_SENSOR   0
 
 // ESP32 Communication Application (ID: 12)
 // Controls relay zones and pump based on master commands
